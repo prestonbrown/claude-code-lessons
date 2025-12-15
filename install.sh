@@ -910,29 +910,56 @@ write_lessons_command() {
 
     mkdir -p "$commands_dir"
 
-    if [[ ! -f "$command_file" ]]; then
-        log_info "Creating /lessons slash command..."
-        cat > "$command_file" << 'EOF'
-# Show Active Lessons
+    log_info "Creating /lessons slash command..."
+    cat > "$command_file" << 'EOF'
+# Lessons Manager
 
-Display the current lessons with star ratings and usage counts.
+Manage the lessons system. Parse the arguments to determine the action.
 
-Run this command to show lessons:
-```bash
-~/.claude/hooks/lessons-manager.sh list
-```
+**Arguments provided**: $ARGUMENTS
 
-Then summarize the output in a table showing:
-1. **Top 5 lessons** by usage (highest stars first) with their ID, star rating, title, and content
-2. Total count of project vs system lessons
-3. Any lessons close to promotion (40+ uses)
+## Instructions
 
-Format the output as a clear markdown table for easy scanning.
+Based on the arguments, run the appropriate command:
+
+### No arguments or "list"
+Run: `~/.claude/hooks/lessons-manager.sh list --verbose`
+Then format the output as a markdown table with columns: ID, Stars, Title, Days Since Cited, Content
+
+### "search <term>"
+Run: `~/.claude/hooks/lessons-manager.sh list --search "<term>"`
+Show matching lessons in a table.
+
+### "category <cat>" or "cat <cat>"
+Run: `~/.claude/hooks/lessons-manager.sh list --category <cat>`
+Valid categories: pattern, correction, gotcha, preference, decision
+
+### "stale"
+Run: `~/.claude/hooks/lessons-manager.sh list --stale --verbose`
+Show lessons that haven't been cited in 60+ days, suggest cleanup.
+
+### "edit <id> <content>"
+Run: `~/.claude/hooks/lessons-manager.sh edit <id> "<content>"`
+Confirm the edit was successful.
+
+### "delete <id>"
+First show the lesson content, ask for confirmation, then run:
+`~/.claude/hooks/lessons-manager.sh delete <id>`
+
+### "help"
+Show available subcommands:
+- `/lessons` - List all lessons with details
+- `/lessons search <term>` - Search by keyword
+- `/lessons category <cat>` - Filter by category
+- `/lessons stale` - Show stale lessons
+- `/lessons edit <id> <content>` - Edit a lesson
+- `/lessons delete <id>` - Delete a lesson (with confirmation)
+
+## Execution
+
+Run the command and present the results clearly. For list operations, always format as a table.
 EOF
-        log_success "Created /lessons command"
-    else
-        log_info "/lessons command already exists"
-    fi
+    log_success "Created /lessons command"
 }
 
 # Export lessons to tarball

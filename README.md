@@ -41,9 +41,19 @@ Format: `LESSON: [category:] title - content`
 
 **Categories:** `pattern`, `correction`, `decision`, `gotcha`, `preference`
 
-### Viewing Lessons
+### Viewing & Managing Lessons
 
-Type `/lessons` in Claude Code to see all your lessons with star ratings in a formatted table.
+Use the `/lessons` slash command in Claude Code:
+
+```
+/lessons                        # List all lessons in a table
+/lessons search <term>          # Search by keyword
+/lessons category gotcha        # Filter by category
+/lessons stale                  # Show lessons uncited 60+ days
+/lessons edit L005 "New text"   # Edit a lesson's content
+/lessons delete L003            # Delete a lesson (with confirmation)
+/lessons help                   # Show all subcommands
+```
 
 ### How It Works
 
