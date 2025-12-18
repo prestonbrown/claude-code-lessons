@@ -720,7 +720,7 @@ write_stop_hook() {
 # SPDX-License-Identifier: MIT
 # lessons-stop-hook.sh - Stop hook to parse Claude output for lesson citations
 
-set -euo pipefail
+set -uo pipefail  # Note: -e removed to prevent silent exits on pipe failures
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANAGER="$SCRIPT_DIR/lessons-manager.sh"
