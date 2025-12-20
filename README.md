@@ -1,35 +1,43 @@
-# Claude Code Lessons System
+# Coding Agent Lessons
 
-A dynamic learning system for [Claude Code](https://github.com/anthropics/claude-code) that tracks patterns, corrections, and gotchas across sessions. Think of it as **persistent memory** that helps Claude learn from your feedback.
+A dynamic learning system for AI coding agents that tracks patterns, corrections, and gotchas across sessions. Works with **Claude Code**, **OpenCode**, and other AI coding tools.
 
-## ✨ Features
+Think of it as **persistent memory** that helps your coding agent learn from your feedback.
 
+## Features
+
+- **Tool-agnostic**: Works with Claude Code, OpenCode, and extensible to other tools
 - **Two-tier architecture**: Project lessons (`[L###]`) and system lessons (`[S###]`)
 - **Star rating system**: Lessons gain stars with each use, promoting high-value ones
 - **Automatic injection**: Lessons shown at session start
-- **Citation tracking**: When Claude applies a lesson, it gains stars
-- **Slash command**: Type `/lessons` to view all lessons with star ratings
-- **Export/Import**: Sync lessons across machines via SSH or tarball
+- **Citation tracking**: When the agent applies a lesson, it gains stars
+- **Slash command**: Type `/lessons` to view all lessons
+- **Migration support**: Easily migrate from old Claude Code-specific locations
 
-## 🚀 Quick Install
+## Quick Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/prestonbrown/claude-code-lessons/main/install.sh | bash
+# Auto-detect installed tools and install for all
+./install.sh
+
+# Or install for specific tools:
+./install.sh --claude    # Claude Code only
+./install.sh --opencode  # OpenCode only
 ```
 
-Or clone and run:
+### Install from GitHub
 
 ```bash
-git clone https://github.com/prestonbrown/claude-code-lessons.git
-cd claude-code-lessons
+git clone https://github.com/prestonbrown/coding-agent-lessons.git
+cd coding-agent-lessons
 ./install.sh
 ```
 
-## 📖 Usage
+## Usage
 
 ### Adding Lessons
 
-Type these directly in Claude Code:
+Type these directly in your coding agent session:
 
 ```
 LESSON: Always use spdlog - Never use printf or cout for logging
@@ -43,133 +51,124 @@ Format: `LESSON: [category:] title - content`
 
 ### Viewing & Managing Lessons
 
-Use the `/lessons` slash command in Claude Code:
+Use the `/lessons` slash command:
 
 ```
-/lessons                        # List all lessons in a table
+/lessons                        # List all lessons
 /lessons search <term>          # Search by keyword
 /lessons category gotcha        # Filter by category
 /lessons stale                  # Show lessons uncited 60+ days
 /lessons edit L005 "New text"   # Edit a lesson's content
-/lessons delete L003            # Delete a lesson (with confirmation)
-/lessons help                   # Show all subcommands
+/lessons delete L003            # Delete a lesson
 ```
 
 ### How It Works
 
-1. **SessionStart**: Lessons are injected as context
-2. **When Claude applies a lesson**: It cites `[L001]` → star count increases
+1. **Session Start**: Lessons are injected as context
+2. **When the agent applies a lesson**: It cites `[L001]` → star count increases
 3. **50+ uses**: Project lesson promotes to system level
 4. **Eviction**: Lowest-star lessons removed when cache fills (default: 30)
 
 ### Star Rating
 
 ```
-[+----/----] = 0.5 stars (1 use)
-[*----/----] = 1.0 star  (2 uses)
-[*****/----] = 5.0 stars (10 uses) - Mature lesson
-[*****/****] = 10 stars  (20 uses) - Display cap
+[+----/-----] = 1 use (new lesson)
+[*----/-----] = 2 uses
+[***--/-----] = 6 uses
+[*****/-----] = 10 uses - Mature lesson
+[*****/****+] = 19 uses
 50+ uses → PROMOTED TO SYSTEM LEVEL
 ```
 
-## 🔄 Sync Across Machines
+## File Locations
 
-### Export lessons
-
-```bash
-~/.claude/install-lessons-system.sh --export
-# Creates ~/claude-lessons-export.tar.gz
-```
-
-### Import from tarball
-
-```bash
-~/.claude/install-lessons-system.sh --import ~/claude-lessons-export.tar.gz
-```
-
-### Pull from SSH host
-
-```bash
-# System lessons only
-~/.claude/install-lessons-system.sh --import-from user@hostname
-
-# Include project lessons from host's current directory
-~/.claude/install-lessons-system.sh --import-from user@hostname -p
-```
-
-## 📁 File Structure
+**Tool-agnostic locations** (new):
 
 ```
-~/.claude/
-├── LESSONS.md              # System lessons (apply everywhere)
-├── CLAUDE.md               # Instructions (lessons section added)
-├── settings.json           # Hooks configuration
-├── commands/
-│   └── lessons.md          # /lessons slash command
-└── hooks/
-    ├── lessons-manager.sh      # Core CLI
-    ├── lessons-inject-hook.sh  # SessionStart hook
-    ├── lessons-capture-hook.sh # UserPromptSubmit hook
-    └── lessons-stop-hook.sh    # Stop hook (citation tracking)
+~/.config/coding-agent-lessons/
+├── lessons-manager.sh      # Core CLI
+└── LESSONS.md              # System lessons (apply everywhere)
 
-<project>/.claude/
+<project>/.coding-agent-lessons/
 └── LESSONS.md              # Project-specific lessons
 ```
 
-## 🛠 Commands
+**Claude Code adapter**:
 
-| Command | Description |
-|---------|-------------|
-| `install.sh` | Install the lessons system |
-| `install.sh --export [file]` | Export lessons to tarball |
-| `install.sh --import <file>` | Import lessons from tarball |
-| `install.sh --import-from <host>` | Pull lessons via SSH |
-| `install.sh --uninstall` | Remove the system (keeps lessons) |
+```
+~/.claude/
+├── settings.json           # Hooks configuration
+├── CLAUDE.md               # Instructions (lessons section added)
+├── commands/
+│   └── lessons.md          # /lessons slash command
+└── hooks/
+    ├── inject-hook.sh      # SessionStart hook
+    ├── capture-hook.sh     # UserPromptSubmit hook
+    └── stop-hook.sh        # Stop hook (citation tracking)
+```
 
-### Manager CLI
+**OpenCode adapter**:
+
+```
+~/.config/opencode/
+├── AGENTS.md               # Instructions (lessons section added)
+├── command/
+│   └── lessons.md          # /lessons slash command
+└── plugin/
+    └── lessons.ts          # OpenCode plugin
+```
+
+## Migration from Old Locations
+
+If you were using the old Claude Code-specific locations:
 
 ```bash
-# Listing lessons
-~/.claude/hooks/lessons-manager.sh list                      # Show all lessons
-~/.claude/hooks/lessons-manager.sh list --project            # Project only
-~/.claude/hooks/lessons-manager.sh list --system             # System only
-~/.claude/hooks/lessons-manager.sh list --search "spdlog"    # Search by keyword
-~/.claude/hooks/lessons-manager.sh list --category gotcha    # Filter by category
-~/.claude/hooks/lessons-manager.sh list --stale              # Show stale lessons (60+ days uncited)
-~/.claude/hooks/lessons-manager.sh list --verbose            # Full details with staleness
-
-# Modifying lessons
-~/.claude/hooks/lessons-manager.sh edit L005 "New content"   # Edit a lesson's content
-~/.claude/hooks/lessons-manager.sh delete L003               # Delete a lesson
-~/.claude/hooks/lessons-manager.sh cite L001                 # Manually cite
-
-# Other
-~/.claude/hooks/lessons-manager.sh evict                     # Run eviction
-~/.claude/hooks/lessons-manager.sh help                      # Show all commands
+./install.sh --migrate
 ```
 
-### Duplicate Detection
+This migrates:
+- `~/.claude/LESSONS.md` → `~/.config/coding-agent-lessons/LESSONS.md`
+- `.claude/LESSONS.md` → `.coding-agent-lessons/LESSONS.md`
 
-When adding a lesson, the system checks for similar existing lessons by title. If a duplicate is found, you'll be warned:
+Old files are backed up with `.migrated.YYYYMMDD` suffix.
 
+## CLI Reference
+
+```bash
+# Manager commands (run directly or via /lessons)
+~/.config/coding-agent-lessons/lessons-manager.sh list              # Show all
+~/.config/coding-agent-lessons/lessons-manager.sh list --project    # Project only
+~/.config/coding-agent-lessons/lessons-manager.sh list --system     # System only
+~/.config/coding-agent-lessons/lessons-manager.sh list --search "term"
+~/.config/coding-agent-lessons/lessons-manager.sh list --category gotcha
+~/.config/coding-agent-lessons/lessons-manager.sh list --stale      # 60+ days uncited
+~/.config/coding-agent-lessons/lessons-manager.sh list --verbose
+
+# Modify lessons
+~/.config/coding-agent-lessons/lessons-manager.sh add pattern "Title" "Content"
+~/.config/coding-agent-lessons/lessons-manager.sh add-system gotcha "Title" "Content"
+~/.config/coding-agent-lessons/lessons-manager.sh cite L001
+~/.config/coding-agent-lessons/lessons-manager.sh edit L005 "New content"
+~/.config/coding-agent-lessons/lessons-manager.sh delete L003
+
+# Session injection (used by hooks)
+~/.config/coding-agent-lessons/lessons-manager.sh inject 5
 ```
-WARNING: Similar lesson already exists: 'Verbose flags required'
-Add anyway? Use 'add --force' to skip this check
+
+## Installer Commands
+
+```bash
+./install.sh                  # Auto-detect and install
+./install.sh --claude         # Install Claude Code adapter only
+./install.sh --opencode       # Install OpenCode adapter only
+./install.sh --migrate        # Migrate from old locations
+./install.sh --uninstall      # Remove adapters (keeps lessons)
+./install.sh --help           # Show help
 ```
 
-### Staleness Tracking
+## Agent Behavior
 
-Lessons that haven't been cited in 60+ days are marked as stale:
-
-```
-[L005] [+----/-----] Static buffers for subjects ⚠️ STALE(75d)
-```
-
-Use `list --stale` to see only stale lessons for review.
-
-## 🤖 Claude's Behavior
-
-When working with you, Claude will:
+When working with you, the agent will:
 
 1. **CITE** lessons when applying them: *"Applying [L001]: using XML event_cb..."*
 2. **PROPOSE** new lessons when:
@@ -178,37 +177,39 @@ When working with you, Claude will:
    - Something fails and it learns why
 3. **NEVER** add lessons without your explicit approval
 
-## 📝 Example Lessons
-
-From a real project (helixscreen):
+## Example Lessons
 
 | ID | Stars | Title |
 |----|-------|-------|
-| [L010] | ★☆☆☆☆ | No spdlog in destructors |
-| [L013] | ★☆☆☆☆ | Callbacks before XML creation |
-| [L005] | ★☆☆☆☆ | Static buffers for subjects |
-| [L006] | ★☆☆☆☆ | get_color vs parse_color |
+| [L010] | [*----/-----] | No spdlog in destructors |
+| [L013] | [**---/-----] | Callbacks before XML creation |
+| [S001] | [***--/-----] | Git commit message format |
 
-## 🔧 Configuration
+## Testing
 
-Edit `~/.claude/settings.json`:
+Run the test suite:
 
-```json
-{
-  "lessonsSystem": {
-    "enabled": true,
-    "maxLessons": 30,
-    "topLessonsToShow": 5,
-    "evictionIntervalHours": 24,
-    "promotionThreshold": 50
-  }
-}
+```bash
+./tests/run-all-tests.sh
 ```
 
-## 📜 License
+## Adding Support for New Tools
+
+1. Create an adapter in `adapters/<tool-name>/`
+2. Implement hooks/plugins that call `lessons-manager.sh`
+3. Add detection and installation logic to `install.sh`
+
+The core `lessons-manager.sh` handles all lesson operations - adapters just need to:
+- Call `inject` at session start
+- Capture `LESSON:` commands from user input
+- Call `cite` when the agent references lessons
+
+## License
 
 MIT License - see [LICENSE](LICENSE)
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
-Built for use with [Claude Code](https://github.com/anthropics/claude-code) by Anthropic.
+Built for use with:
+- [Claude Code](https://github.com/anthropics/claude-code) by Anthropic
+- [OpenCode](https://opencode.ai) by SST
