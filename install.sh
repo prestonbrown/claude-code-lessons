@@ -231,7 +231,16 @@ A tiered cache that tracks corrections/patterns across sessions.
 '
     
     if [[ -f "$claude_md" ]]; then
-        if ! grep -q "Lessons System" "$claude_md"; then
+        # Check if old locations are referenced and need updating
+        if grep -q "\.claude/LESSONS\.md" "$claude_md" || grep -q "~/.claude/LESSONS\.md" "$claude_md"; then
+            log_info "Updating old LESSONS.md paths in CLAUDE.md..."
+            sed -i.bak \
+                -e 's|\.claude/LESSONS\.md|.coding-agent-lessons/LESSONS.md|g' \
+                -e 's|~/.claude/LESSONS\.md|~/.config/coding-agent-lessons/LESSONS.md|g' \
+                "$claude_md"
+            rm -f "${claude_md}.bak"
+            log_success "Updated CLAUDE.md with new paths"
+        elif ! grep -q "Lessons System" "$claude_md"; then
             echo "$lessons_section" >> "$claude_md"
         fi
     else
@@ -269,7 +278,16 @@ A tiered learning cache that tracks corrections/patterns across sessions.
 '
     
     if [[ -f "$agents_md" ]]; then
-        if ! grep -q "Lessons System" "$agents_md"; then
+        # Check if old locations are referenced and need updating
+        if grep -q "\.claude/LESSONS\.md" "$agents_md" || grep -q "~/.claude/LESSONS\.md" "$agents_md"; then
+            log_info "Updating old LESSONS.md paths in AGENTS.md..."
+            sed -i.bak \
+                -e 's|\.claude/LESSONS\.md|.coding-agent-lessons/LESSONS.md|g' \
+                -e 's|~/.claude/LESSONS\.md|~/.config/coding-agent-lessons/LESSONS.md|g' \
+                "$agents_md"
+            rm -f "${agents_md}.bak"
+            log_success "Updated AGENTS.md with new paths"
+        elif ! grep -q "Lessons System" "$agents_md"; then
             echo "$lessons_section" >> "$agents_md"
         fi
     else
