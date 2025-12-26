@@ -180,7 +180,12 @@ cite_lesson() {
             IFS= read -r meta_line
             if [[ "$meta_line" =~ \*\*Uses\*\*:[[:space:]]*([0-9]+) ]]; then
                 local old_uses="${BASH_REMATCH[1]}"
-                new_uses=$((old_uses + 1))
+                # Cap uses at 100 - no functional difference beyond that
+                if (( old_uses >= 100 )); then
+                    new_uses=100
+                else
+                    new_uses=$((old_uses + 1))
+                fi
                 local new_stars=$(uses_to_stars $new_uses)
                 echo "### [$lesson_id] $new_stars $title" >> "$tmp_file"
                 echo "$meta_line" | sed -E "s/\*\*Uses\*\*:[[:space:]]*[0-9]+/**Uses**: $new_uses/" | \
@@ -260,6 +265,74 @@ delete_lesson() {
 
     mv "$tmp_file" "$file"
     echo "Deleted $lesson_id: $deleted_title"
+}
+
+promote_lesson() {
+    local lesson_id="$1"
+
+    # Validate: must be a project lesson (L###)
+    [[ ! "$lesson_id" =~ ^L[0-9]+$ ]] && { echo "Error: Can only promote project lessons (L###)" >&2; return 1; }
+    [[ ! -f "$PROJECT_LESSONS_FILE" ]] && { echo "Project lessons file not found" >&2; return 1; }
+    grep -q "\[$lesson_id\]" "$PROJECT_LESSONS_FILE" || { echo "Lesson $lesson_id not found in project" >&2; return 1; }
+
+    # Extract lesson data from project file
+    local stars="" title="" uses="" learned="" last="" category="" content=""
+    local in_lesson=false
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^###[[:space:]]*\[$lesson_id\][[:space:]]*(\[[^\]]+\])[[:space:]]*(.*) ]]; then
+            in_lesson=true
+            stars="${BASH_REMATCH[1]}"
+            title="${BASH_REMATCH[2]}"
+        elif $in_lesson; then
+            if [[ "$line" =~ \*\*Uses\*\*:[[:space:]]*([0-9]+) ]]; then
+                uses="${BASH_REMATCH[1]}"
+                [[ "$line" =~ \*\*Learned\*\*:[[:space:]]*([0-9-]+) ]] && learned="${BASH_REMATCH[1]}"
+                [[ "$line" =~ \*\*Last\*\*:[[:space:]]*([0-9-]+) ]] && last="${BASH_REMATCH[1]}"
+                [[ "$line" =~ \*\*Category\*\*:[[:space:]]*([a-z]+) ]] && category="${BASH_REMATCH[1]}"
+            elif [[ "$line" =~ ^\>[[:space:]]*(.*) ]]; then
+                content="${BASH_REMATCH[1]}"
+                break
+            fi
+        fi
+    done < "$PROJECT_LESSONS_FILE"
+
+    [[ -z "$title" ]] && { echo "Failed to extract lesson data" >&2; return 1; }
+
+    # Initialize system file if needed
+    init_lessons_file "$SYSTEM_LESSONS_FILE" "system"
+
+    # Get next system lesson ID
+    local new_id=$(get_next_id "$SYSTEM_LESSONS_FILE" "S")
+
+    # Add to system file
+    cat >> "$SYSTEM_LESSONS_FILE" << EOF
+
+### [$new_id] $stars $title
+- **Uses**: $uses | **Learned**: $learned | **Last**: $last | **Category**: $category
+> $content
+
+EOF
+
+    # Remove from project file
+    local tmp_file=$(mktemp) skip_until_next=false
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" =~ ^###[[:space:]]*\[$lesson_id\] ]]; then
+            skip_until_next=true
+            continue
+        fi
+        if $skip_until_next; then
+            if [[ "$line" =~ ^###[[:space:]]*\[[LS][0-9]+\] ]] || [[ -z "$line" && $(tail -1 "$tmp_file" 2>/dev/null) == "" ]]; then
+                skip_until_next=false
+                [[ "$line" =~ ^### ]] && echo "$line" >> "$tmp_file"
+            fi
+            continue
+        fi
+        echo "$line" >> "$tmp_file"
+    done < "$PROJECT_LESSONS_FILE"
+    mv "$tmp_file" "$PROJECT_LESSONS_FILE"
+
+    echo "Promoted $lesson_id -> $new_id: $title"
+    echo "Uses: $uses (threshold: $SYSTEM_PROMOTION_THRESHOLD)"
 }
 
 inject_context() {
@@ -439,6 +512,7 @@ COMMANDS:
   cite <id>                   Increment usage count
   edit <id> <content>         Edit lesson content
   delete <id>                 Delete a lesson
+  promote <id>                Promote project lesson to system scope
   inject [n]                  Output top N lessons for session injection
   reset-reminder              Reset the periodic reminder counter
 
@@ -475,6 +549,9 @@ main() {
         delete)
             [[ $# -lt 1 ]] && { echo "Usage: delete <id>" >&2; exit 1; }
             delete_lesson "$1" ;;
+        promote)
+            [[ $# -lt 1 ]] && { echo "Usage: promote <id>" >&2; exit 1; }
+            promote_lesson "$1" ;;
         inject) inject_context "${1:-5}" ;;
         list) list_lessons "$@" ;;
         evict) evict_lessons "${1:-}" ;;
