@@ -69,6 +69,7 @@ Use the `/lessons` slash command:
 3. **When the agent applies a lesson**: It cites `[L001]` → star count increases
 4. **50+ uses**: Project lesson promotes to system level
 5. **Eviction**: Lowest-star lessons removed when cache fills (default: 30)
+6. **Decay**: Stale lessons lose stars over time (activity-aware)
 
 ### Periodic Reminders
 
@@ -112,6 +113,8 @@ Reset the reminder counter manually:
 ├── lesson-reminder-hook.sh     # Periodic reminder script (for Claude Code)
 ├── LESSONS.md                  # System lessons (apply everywhere)
 ├── .reminder-state             # Prompt counter (auto-managed)
+├── .decay-last-run             # Decay timestamp (auto-managed)
+├── .citation-state/            # Per-session checkpoints (auto-managed)
 └── plugins/
     └── opencode-lesson-reminder.ts  # OpenCode plugin
 
@@ -211,13 +214,35 @@ When working with you, the agent will:
 | [L013] | [**---/-----] | Callbacks before XML creation |
 | [S001] | [***--/-----] | Git commit message format |
 
+## Lesson Decay
+
+Lessons can become stale over time. The decay system addresses this:
+
+- **Weekly check**: Runs automatically at session start (once per week)
+- **Activity-aware**: Only decays if you've been coding (no penalty for vacations)
+- **Gradual decay**: Lessons uncited for 30+ days lose 1 star per week
+- **Never deleted**: Uses never drops below 1 (lessons persist until manually removed)
+
+Run decay manually:
+```bash
+~/.config/coding-agent-lessons/lessons-manager.sh decay 30
+```
+
 ## Testing
 
 Run the test suite:
 
 ```bash
-./tests/run-all-tests.sh
+./tests/test-stop-hook.sh
 ```
+
+See [docs/TESTING.md](docs/TESTING.md) for detailed testing guide.
+
+## Developer Documentation
+
+- [DEVELOPMENT.md](DEVELOPMENT.md) - Architecture, code style, debugging
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) - Hook installation and management
+- [docs/TESTING.md](docs/TESTING.md) - Test framework and writing tests
 
 ## Adding Support for New Tools
 
