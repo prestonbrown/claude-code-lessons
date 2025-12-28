@@ -52,21 +52,50 @@ EOF
     fi
 }
 
+# Generate lesson rating display: [total|velocity]
+# Left side: logarithmic total uses (spreads high-value lessons better)
+# Right side: velocity/recency (14-day activity indicator)
+lesson_rating() {
+    local uses=$1
+    local velocity=${2:-0}
+
+    # Left side: logarithmic total uses scale
+    # 1-2=*, 3-5=**, 6-12=***, 13-30=****, 31+=*****
+    local left=""
+    if (( uses >= 31 )); then left="*****"
+    elif (( uses >= 13 )); then left="****-"
+    elif (( uses >= 6 )); then left="***--"
+    elif (( uses >= 3 )); then left="**---"
+    elif (( uses >= 1 )); then left="*----"
+    else left="-----"; fi
+
+    # Right side: velocity (recent 14-day citation activity)
+    # Uses bc for float comparison, with fallback for missing bc
+    local right="-----"
+    if command -v bc >/dev/null 2>&1; then
+        if (( $(echo "$velocity >= 4.5" | bc -l 2>/dev/null || echo 0) )); then right="****+"
+        elif (( $(echo "$velocity >= 3.5" | bc -l 2>/dev/null || echo 0) )); then right="***--"
+        elif (( $(echo "$velocity >= 2.5" | bc -l 2>/dev/null || echo 0) )); then right="**---"
+        elif (( $(echo "$velocity >= 1.5" | bc -l 2>/dev/null || echo 0) )); then right="*----"
+        elif (( $(echo "$velocity >= 0.5" | bc -l 2>/dev/null || echo 0) )); then right="+----"
+        fi
+    else
+        # Fallback: treat velocity as integer
+        local vel_int=${velocity%.*}
+        if (( vel_int >= 5 )); then right="****+"
+        elif (( vel_int >= 4 )); then right="***--"
+        elif (( vel_int >= 3 )); then right="**---"
+        elif (( vel_int >= 2 )); then right="*----"
+        elif (( vel_int >= 1 )); then right="+----"
+        fi
+    fi
+
+    echo "[$left|$right]"
+}
+
+# Backward compatibility alias
 uses_to_stars() {
-    local uses=$1 left="" right=""
-    for i in 1 2 3 4 5; do
-        local threshold=$((i * 2))
-        if (( uses >= threshold )); then left+="*"
-        elif (( uses >= threshold - 1 )); then left+="+"
-        else left+="-"; fi
-    done
-    for i in 1 2 3 4 5; do
-        local threshold=$(( (i * 2) + 10 ))
-        if (( uses >= threshold )); then right+="*"
-        elif (( uses >= threshold - 1 )); then right+="+"
-        else right+="-"; fi
-    done
-    echo "[$left/$right]"
+    lesson_rating "$1" 0
 }
 
 get_next_id() {
@@ -132,11 +161,11 @@ add_lesson() {
 
     local lesson_id=$(get_next_id "$file" "$prefix")
     local date_learned=$(date +%Y-%m-%d)
-    local stars=$(uses_to_stars 1)
+    local stars=$(lesson_rating 1 0)
     cat >> "$file" << EOF
 
 ### [$lesson_id] $stars $title
-- **Uses**: 1 | **Learned**: $date_learned | **Last**: $date_learned | **Category**: $category
+- **Uses**: 1 | **Velocity**: 0 | **Learned**: $date_learned | **Last**: $date_learned | **Category**: $category
 > $content
 
 EOF
@@ -154,11 +183,11 @@ add_lesson_force() {
     init_lessons_file "$file" "$level"
     local lesson_id=$(get_next_id "$file" "$prefix")
     local date_learned=$(date +%Y-%m-%d)
-    local stars=$(uses_to_stars 1)
+    local stars=$(lesson_rating 1 0)
     cat >> "$file" << EOF
 
 ### [$lesson_id] $stars $title
-- **Uses**: 1 | **Learned**: $date_learned | **Last**: $date_learned | **Category**: $category
+- **Uses**: 1 | **Velocity**: 0 | **Learned**: $date_learned | **Last**: $date_learned | **Category**: $category
 > $content
 
 EOF
@@ -172,9 +201,9 @@ cite_lesson() {
     [[ ! -f "$file" ]] && { echo "Lessons file not found: $file" >&2; return 1; }
     grep -q "\[$lesson_id\]" "$file" || { echo "Lesson $lesson_id not found" >&2; return 1; }
 
-    local tmp_file=$(mktemp) found=false new_uses=0
+    local tmp_file=$(mktemp) found=false new_uses=0 new_velocity=0
     while IFS= read -r line || [[ -n "$line" ]]; do
-        if [[ "$line" =~ ^###[[:space:]]*\[($lesson_id)\][[:space:]]*\[([*+/\ -]+)\][[:space:]]*(.*) ]]; then
+        if [[ "$line" =~ ^###[[:space:]]*\[($lesson_id)\][[:space:]]*\[([*+|/\ -]+)\][[:space:]]*(.*) ]]; then
             found=true
             local title="${BASH_REMATCH[3]}"
             IFS= read -r meta_line
@@ -186,10 +215,35 @@ cite_lesson() {
                 else
                     new_uses=$((old_uses + 1))
                 fi
-                local new_stars=$(uses_to_stars $new_uses)
+
+                # Parse velocity (default 0 for old-format lessons)
+                local old_velocity=0
+                if [[ "$meta_line" =~ \*\*Velocity\*\*:[[:space:]]*([0-9.]+) ]]; then
+                    old_velocity="${BASH_REMATCH[1]}"
+                fi
+                # Increment velocity by 1
+                if command -v bc >/dev/null 2>&1; then
+                    new_velocity=$(echo "$old_velocity + 1" | bc -l)
+                else
+                    new_velocity=$((${old_velocity%.*} + 1))
+                fi
+
+                local new_stars=$(lesson_rating $new_uses $new_velocity)
                 echo "### [$lesson_id] $new_stars $title" >> "$tmp_file"
-                echo "$meta_line" | sed -E "s/\*\*Uses\*\*:[[:space:]]*[0-9]+/**Uses**: $new_uses/" | \
-                    sed -E "s/\*\*Last\*\*:[[:space:]]*[0-9-]+/**Last**: $today/" >> "$tmp_file"
+
+                # Update metadata: Uses, Velocity, Last
+                local updated_meta="$meta_line"
+                updated_meta=$(echo "$updated_meta" | sed -E "s/\*\*Uses\*\*:[[:space:]]*[0-9]+/**Uses**: $new_uses/")
+                updated_meta=$(echo "$updated_meta" | sed -E "s/\*\*Last\*\*:[[:space:]]*[0-9-]+/**Last**: $today/")
+
+                # Handle Velocity field (add if missing, update if present)
+                if [[ "$meta_line" =~ \*\*Velocity\*\* ]]; then
+                    updated_meta=$(echo "$updated_meta" | sed -E "s/\*\*Velocity\*\*:[[:space:]]*[0-9.]+/**Velocity**: $new_velocity/")
+                else
+                    # Insert Velocity after Uses for old-format lessons
+                    updated_meta=$(echo "$updated_meta" | sed -E "s/(\*\*Uses\*\*:[[:space:]]*[0-9]+)/\1 | **Velocity**: $new_velocity/")
+                fi
+                echo "$updated_meta" >> "$tmp_file"
             fi
         else
             echo "$line" >> "$tmp_file"
@@ -276,7 +330,7 @@ promote_lesson() {
     grep -q "\[$lesson_id\]" "$PROJECT_LESSONS_FILE" || { echo "Lesson $lesson_id not found in project" >&2; return 1; }
 
     # Extract lesson data from project file
-    local stars="" title="" uses="" learned="" last="" category="" content=""
+    local stars="" title="" uses="" velocity="" learned="" last="" category="" content=""
     local in_lesson=false
     while IFS= read -r line; do
         if [[ "$line" =~ ^###[[:space:]]*\[$lesson_id\][[:space:]]*(\[[^\]]+\])[[:space:]]*(.*) ]]; then
@@ -286,6 +340,7 @@ promote_lesson() {
         elif $in_lesson; then
             if [[ "$line" =~ \*\*Uses\*\*:[[:space:]]*([0-9]+) ]]; then
                 uses="${BASH_REMATCH[1]}"
+                [[ "$line" =~ \*\*Velocity\*\*:[[:space:]]*([0-9.]+) ]] && velocity="${BASH_REMATCH[1]}"
                 [[ "$line" =~ \*\*Learned\*\*:[[:space:]]*([0-9-]+) ]] && learned="${BASH_REMATCH[1]}"
                 [[ "$line" =~ \*\*Last\*\*:[[:space:]]*([0-9-]+) ]] && last="${BASH_REMATCH[1]}"
                 [[ "$line" =~ \*\*Category\*\*:[[:space:]]*([a-z]+) ]] && category="${BASH_REMATCH[1]}"
@@ -304,11 +359,16 @@ promote_lesson() {
     # Get next system lesson ID
     local new_id=$(get_next_id "$SYSTEM_LESSONS_FILE" "S")
 
+    # Build metadata line (include Velocity if present)
+    local meta_line="- **Uses**: $uses"
+    [[ -n "$velocity" ]] && meta_line+=" | **Velocity**: $velocity"
+    meta_line+=" | **Learned**: $learned | **Last**: $last | **Category**: $category"
+
     # Add to system file
     cat >> "$SYSTEM_LESSONS_FILE" << EOF
 
 ### [$new_id] $stars $title
-- **Uses**: $uses | **Learned**: $learned | **Last**: $last | **Category**: $category
+$meta_line
 > $content
 
 EOF
@@ -344,7 +404,8 @@ inject_context() {
         [[ ! -f "$file" ]] && return
         local lesson_id="" stars="" title="" uses="" content=""
         while IFS= read -r line; do
-            if [[ "$line" =~ ^###[[:space:]]*(\[[LS][0-9]+\])[[:space:]]*(\[[*+/\ -]+\])[[:space:]]*(.*) ]]; then
+            # Match both old format [***--/-----] and new format [***--|-----]
+            if [[ "$line" =~ ^###[[:space:]]*(\[[LS][0-9]+\])[[:space:]]*(\[[*+|/\ -]+\])[[:space:]]*(.*) ]]; then
                 lesson_id="${BASH_REMATCH[1]}"; stars="${BASH_REMATCH[2]}"; title="${BASH_REMATCH[3]}"
             elif [[ -n "$lesson_id" && "$line" =~ \*\*Uses\*\*:[[:space:]]*([0-9]+) ]]; then
                 uses="${BASH_REMATCH[1]}"
@@ -489,20 +550,52 @@ evict_lessons() {
     echo "Eviction needed: $count > $max_count (not yet implemented)"
 }
 
-# Update a lesson's uses count directly (for decay)
-update_lesson_uses() {
-    local lesson_id="$1" new_uses="$2" file="$3"
+# Update a lesson's uses and/or velocity (for decay)
+# Usage: update_lesson_metadata <lesson_id> <new_uses> <new_velocity> <file>
+# Pass empty string "" for uses or velocity to leave unchanged
+update_lesson_metadata() {
+    local lesson_id="$1" new_uses="$2" new_velocity="$3" file="$4"
     [[ ! -f "$file" ]] && return 1
 
     local tmp_file=$(mktemp) found=false
     while IFS= read -r line || [[ -n "$line" ]]; do
-        if [[ "$line" =~ ^###[[:space:]]*\[($lesson_id)\][[:space:]]*\[([*+/\ -]+)\][[:space:]]*(.*) ]]; then
+        if [[ "$line" =~ ^###[[:space:]]*\[($lesson_id)\][[:space:]]*\[([*+|/\ -]+)\][[:space:]]*(.*) ]]; then
             found=true
             local title="${BASH_REMATCH[3]}"
-            local new_stars=$(uses_to_stars $new_uses)
-            echo "### [$lesson_id] $new_stars $title" >> "$tmp_file"
             IFS= read -r meta_line
-            echo "$meta_line" | sed -E "s/\*\*Uses\*\*:[[:space:]]*[0-9]+/**Uses**: $new_uses/" >> "$tmp_file"
+
+            # Parse current values for rating calculation
+            local uses_for_rating="$new_uses"
+            local velocity_for_rating="$new_velocity"
+
+            if [[ -z "$uses_for_rating" ]]; then
+                [[ "$meta_line" =~ \*\*Uses\*\*:[[:space:]]*([0-9]+) ]] && uses_for_rating="${BASH_REMATCH[1]}"
+            fi
+            if [[ -z "$velocity_for_rating" ]]; then
+                if [[ "$meta_line" =~ \*\*Velocity\*\*:[[:space:]]*([0-9.]+) ]]; then
+                    velocity_for_rating="${BASH_REMATCH[1]}"
+                else
+                    velocity_for_rating="0"
+                fi
+            fi
+
+            local new_stars=$(lesson_rating "${uses_for_rating:-1}" "${velocity_for_rating:-0}")
+            echo "### [$lesson_id] $new_stars $title" >> "$tmp_file"
+
+            # Update metadata fields as needed
+            local updated_meta="$meta_line"
+            if [[ -n "$new_uses" ]]; then
+                updated_meta=$(echo "$updated_meta" | sed -E "s/\*\*Uses\*\*:[[:space:]]*[0-9]+/**Uses**: $new_uses/")
+            fi
+            if [[ -n "$new_velocity" ]]; then
+                if [[ "$meta_line" =~ \*\*Velocity\*\* ]]; then
+                    updated_meta=$(echo "$updated_meta" | sed -E "s/\*\*Velocity\*\*:[[:space:]]*[0-9.]+/**Velocity**: $new_velocity/")
+                else
+                    # Add Velocity field if missing
+                    updated_meta=$(echo "$updated_meta" | sed -E "s/(\*\*Uses\*\*:[[:space:]]*[0-9]+)/\1 | **Velocity**: $new_velocity/")
+                fi
+            fi
+            echo "$updated_meta" >> "$tmp_file"
         else
             echo "$line" >> "$tmp_file"
         fi
@@ -517,10 +610,16 @@ update_lesson_uses() {
     fi
 }
 
-# Decay lessons that haven't been cited recently
+# Backward compatibility wrapper
+update_lesson_uses() {
+    local lesson_id="$1" new_uses="$2" file="$3"
+    update_lesson_metadata "$lesson_id" "$new_uses" "" "$file"
+}
+
+# Decay lessons: velocity (50% half-life for all) and uses (stale lessons only)
 # Only runs if there was coding activity since last decay (to avoid penalizing vacations)
 decay_lessons() {
-    local decay_period=${1:-30}  # Days of staleness before decay kicks in
+    local decay_period=${1:-30}  # Days of staleness before uses decay kicks in
     local state_dir="${LESSONS_BASE}/.citation-state"
     local decay_state="${LESSONS_BASE}/.decay-last-run"
 
@@ -541,55 +640,87 @@ decay_lessons() {
         return 0
     fi
 
-    local decayed=0
+    local decayed_uses=0 decayed_velocity=0
     for lessons_file in "$SYSTEM_LESSONS_FILE" "$PROJECT_LESSONS_FILE"; do
         [[ -f "$lessons_file" ]] || continue
 
-        # PHASE 1: Collect lessons that need decay (avoid modifying file while reading)
-        local lessons_to_decay=()
-        local lesson_id="" uses="" last=""
+        # PHASE 1: Collect all lessons and their metadata
+        local all_lessons=()        # All lesson IDs (for velocity decay)
+        local stale_lessons=()      # Stale lessons with uses > 1 (for uses decay)
+        local lesson_id="" uses="" velocity="" last=""
+
         while IFS= read -r line; do
             if [[ "$line" =~ ^###[[:space:]]*\[([LS][0-9]+)\] ]]; then
-                # Check previous lesson
-                if [[ -n "$lesson_id" && -n "$uses" && -n "$last" && $uses -gt 1 ]]; then
-                    local days_stale=$(days_since "$last")
-                    if [[ $days_stale -gt $decay_period ]]; then
-                        lessons_to_decay+=("$lesson_id")
+                # Process previous lesson
+                if [[ -n "$lesson_id" ]]; then
+                    all_lessons+=("$lesson_id")
+                    # Check if stale and needs uses decay
+                    if [[ -n "$uses" && -n "$last" && $uses -gt 1 ]]; then
+                        local days_stale=$(days_since "$last")
+                        if [[ $days_stale -gt $decay_period ]]; then
+                            stale_lessons+=("$lesson_id")
+                        fi
                     fi
                 fi
                 lesson_id="${BASH_REMATCH[1]}"
-                uses="" last=""
+                uses="" velocity="" last=""
             elif [[ -n "$lesson_id" && "$line" =~ \*\*Uses\*\*:[[:space:]]*([0-9]+) ]]; then
                 uses="${BASH_REMATCH[1]}"
+                [[ "$line" =~ \*\*Velocity\*\*:[[:space:]]*([0-9.]+) ]] && velocity="${BASH_REMATCH[1]}"
                 [[ "$line" =~ \*\*Last\*\*:[[:space:]]*([0-9-]+) ]] && last="${BASH_REMATCH[1]}"
             fi
         done < "$lessons_file"
 
-        # Check last lesson
-        if [[ -n "$lesson_id" && -n "$uses" && -n "$last" && $uses -gt 1 ]]; then
-            local days_stale=$(days_since "$last")
-            if [[ $days_stale -gt $decay_period ]]; then
-                lessons_to_decay+=("$lesson_id")
+        # Process last lesson
+        if [[ -n "$lesson_id" ]]; then
+            all_lessons+=("$lesson_id")
+            if [[ -n "$uses" && -n "$last" && $uses -gt 1 ]]; then
+                local days_stale=$(days_since "$last")
+                if [[ $days_stale -gt $decay_period ]]; then
+                    stale_lessons+=("$lesson_id")
+                fi
             fi
         fi
 
-        # PHASE 2: Apply decay to collected lessons (re-reads fresh values)
-        for lid in "${lessons_to_decay[@]}"; do
-            # Re-read current uses value to avoid stale data issues
+        # PHASE 2a: Decay velocity for ALL lessons (50% half-life)
+        for lid in "${all_lessons[@]}"; do
+            local current_velocity=$(grep -A1 "^### \[$lid\]" "$lessons_file" 2>/dev/null | \
+                grep -oE '\*\*Velocity\*\*: [0-9.]+' | grep -oE '[0-9.]+' || echo "")
+
+            # Only decay if velocity exists and is > 0.01 (avoid tiny values)
+            if [[ -n "$current_velocity" ]]; then
+                local new_velocity
+                if command -v bc >/dev/null 2>&1; then
+                    new_velocity=$(echo "scale=2; $current_velocity * 0.5" | bc -l)
+                    # Round to 0 if very small
+                    if (( $(echo "$new_velocity < 0.01" | bc -l) )); then
+                        new_velocity="0"
+                    fi
+                else
+                    # Integer fallback: divide by 2
+                    new_velocity=$((${current_velocity%.*} / 2))
+                fi
+
+                if [[ "$new_velocity" != "$current_velocity" ]]; then
+                    update_lesson_metadata "$lid" "" "$new_velocity" "$lessons_file" && ((decayed_velocity++)) || true
+                fi
+            fi
+        done
+
+        # PHASE 2b: Decay uses for stale lessons (uses -1, min 1)
+        for lid in "${stale_lessons[@]}"; do
             local current_uses=$(grep -A1 "^### \[$lid\]" "$lessons_file" 2>/dev/null | \
                 grep -oE '\*\*Uses\*\*: [0-9]+' | grep -oE '[0-9]+' || echo "0")
             if [[ $current_uses -gt 1 ]]; then
                 local new_uses=$((current_uses - 1))
-                if update_lesson_uses "$lid" "$new_uses" "$lessons_file"; then
-                    ((decayed++)) || true
-                fi
+                update_lesson_metadata "$lid" "$new_uses" "" "$lessons_file" && ((decayed_uses++)) || true
             fi
         done
     done
 
     # Update decay timestamp
     date +%s > "$decay_state"
-    echo "Decayed $decayed lesson(s) ($recent_sessions sessions since last run)"
+    echo "Decayed: $decayed_uses uses, $decayed_velocity velocities ($recent_sessions sessions since last run)"
 }
 
 show_help() {
