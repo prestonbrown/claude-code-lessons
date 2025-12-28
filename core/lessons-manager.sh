@@ -517,9 +517,10 @@ output_lesson() {
 
     if [[ -n "$search" ]]; then
         local search_lower=$(echo "$search" | tr '[:upper:]' '[:lower:]')
+        local id_lower=$(echo "$id" | tr '[:upper:]' '[:lower:]')
         local title_lower=$(echo "$title" | tr '[:upper:]' '[:lower:]')
         local content_lower=$(echo "$content" | tr '[:upper:]' '[:lower:]')
-        [[ "$title_lower" != *"$search_lower"* && "$content_lower" != *"$search_lower"* ]] && return 1
+        [[ "$id_lower" != *"$search_lower"* && "$title_lower" != *"$search_lower"* && "$content_lower" != *"$search_lower"* ]] && return 1
     fi
 
     [[ -n "$category" && "$cat" != "$category" ]] && return 1

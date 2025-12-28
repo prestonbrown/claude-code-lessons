@@ -322,11 +322,42 @@ test_list_system_lessons() {
 test_list_search_filter() {
     "$MANAGER" add pattern "RAII Pattern" "Use smart pointers" >/dev/null
     "$MANAGER" add correction "Logging Fix" "Use spdlog" >/dev/null
-    
+
     local output
     output=$("$MANAGER" list --search "RAII")
     assert_contains "$output" "RAII Pattern" "Should find matching lesson"
     assert_not_contains "$output" "Logging Fix" "Should not show non-matching lesson"
+}
+
+test_list_search_by_id() {
+    "$MANAGER" add pattern "First Lesson" "Content one" >/dev/null
+    "$MANAGER" add correction "Second Lesson" "Content two" >/dev/null
+    "$MANAGER" add-system gotcha "System Lesson" "System content" >/dev/null
+
+    # Search by project lesson ID
+    local output
+    output=$("$MANAGER" list --search "L001")
+    assert_contains "$output" "First Lesson" "Should find lesson by ID L001"
+    assert_not_contains "$output" "Second Lesson" "Should not show non-matching lesson"
+
+    # Search by system lesson ID
+    output=$("$MANAGER" list --search "S001")
+    assert_contains "$output" "System Lesson" "Should find system lesson by ID S001"
+    assert_not_contains "$output" "First Lesson" "Should not show project lessons when searching S001"
+
+    # Search by partial ID
+    output=$("$MANAGER" list --search "L00")
+    assert_contains "$output" "First Lesson" "Should find L001 with partial ID"
+    assert_contains "$output" "Second Lesson" "Should find L002 with partial ID"
+}
+
+test_list_search_case_insensitive_id() {
+    "$MANAGER" add pattern "Case Test" "Content" >/dev/null
+
+    # Search should be case-insensitive
+    local output
+    output=$("$MANAGER" list --search "l001")
+    assert_contains "$output" "Case Test" "Should find lesson with lowercase id search"
 }
 
 test_list_category_filter() {
@@ -368,27 +399,27 @@ test_inject_empty() {
 
 test_star_rating_initial() {
     "$MANAGER" add pattern "Stars Test" "Content" >/dev/null
-    
+
     local lessons_file="$TEST_DIR/project/.coding-agent-lessons/LESSONS.md"
     local content
     content=$(cat "$lessons_file")
-    # 1 use = first star half-filled: [+----/-----]
-    assert_contains "$content" "[+----/-----]" "Initial stars should show 1 use"
+    # 1 use, 0 velocity = [*----|-----] (uses|velocity format)
+    assert_contains "$content" "[*----|-----]" "Initial stars should show 1 use, 0 velocity"
 }
 
 test_star_rating_increases() {
     "$MANAGER" add pattern "Stars Growth" "Content" >/dev/null
-    
+
     # Cite multiple times to increase stars
     for i in {1..4}; do
         "$MANAGER" cite L001 >/dev/null
     done
-    
+
     local lessons_file="$TEST_DIR/project/.coding-agent-lessons/LESSONS.md"
     local content
     content=$(cat "$lessons_file")
-    # 5 uses = **+--
-    assert_contains "$content" "**+--/-----" "Stars should reflect 5 uses"
+    # 5 uses, 4 velocity (citations add velocity) = [**---|***--] (uses|velocity format)
+    assert_contains "$content" "[**---|***--]" "Stars should reflect 5 uses and 4 velocity"
 }
 
 test_promotion_threshold() {
@@ -495,6 +526,8 @@ main() {
     run_test "list project lessons" test_list_project_lessons
     run_test "list system lessons" test_list_system_lessons
     run_test "list search filter" test_list_search_filter
+    run_test "list search by ID" test_list_search_by_id
+    run_test "list search case insensitive ID" test_list_search_case_insensitive_id
     run_test "list category filter" test_list_category_filter
     run_test "list verbose" test_list_verbose
     
