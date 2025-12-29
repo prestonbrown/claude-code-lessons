@@ -8,8 +8,12 @@
 
 set -uo pipefail
 
-MANAGER="$HOME/.config/coding-agent-lessons/lessons-manager.sh"
-STATE_DIR="${LESSONS_BASE:-$HOME/.config/coding-agent-lessons}/.citation-state"
+LESSONS_BASE="${LESSONS_BASE:-$HOME/.config/coding-agent-lessons}"
+BASH_MANAGER="$LESSONS_BASE/lessons-manager.sh"
+# Python manager - try multiple locations
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYTHON_MANAGER="$SCRIPT_DIR/../../core/lessons_manager.py"
+STATE_DIR="$LESSONS_BASE/.citation-state"
 
 is_enabled() {
     local config="$HOME/.claude/settings.json"
@@ -72,6 +76,183 @@ cleanup_orphaned_checkpoints() {
     (( cleaned > 0 )) && echo "[lessons] Cleaned $cleaned orphaned checkpoint(s)" >&2
 }
 
+# Detect and process AI LESSON: patterns in assistant messages
+# Format: AI LESSON: category: title - content
+# Example: AI LESSON: correction: Always use absolute paths - Relative paths fail in shell hooks
+process_ai_lessons() {
+    local transcript_path="$1"
+    local project_root="$2"
+    local last_timestamp="$3"
+    local added_count=0
+
+    # Extract AI LESSON patterns from assistant messages
+    local ai_lessons=""
+    if [[ -z "$last_timestamp" ]]; then
+        ai_lessons=$(jq -r 'select(.type == "assistant") |
+            .message.content[]? | select(.type == "text") | .text' "$transcript_path" 2>/dev/null | \
+            grep -oE 'AI LESSON:.*' || true)
+    else
+        ai_lessons=$(jq -r --arg ts "$last_timestamp" '
+            select(.type == "assistant" and .timestamp > $ts) |
+            .message.content[]? | select(.type == "text") | .text' "$transcript_path" 2>/dev/null | \
+            grep -oE 'AI LESSON:.*' || true)
+    fi
+
+    [[ -z "$ai_lessons" ]] && return 0
+
+    while IFS= read -r lesson_line; do
+        [[ -z "$lesson_line" ]] && continue
+
+        # Parse: AI LESSON: category: title - content
+        # Remove "AI LESSON: " prefix
+        local remainder="${lesson_line#AI LESSON: }"
+        remainder="${remainder#AI LESSON:}"  # Also handle without space
+
+        # Extract category (everything before first colon)
+        local category="${remainder%%:*}"
+        category=$(echo "$category" | tr '[:upper:]' '[:lower:]' | xargs)  # normalize
+
+        # Extract title and content (everything after first colon)
+        local title_content="${remainder#*:}"
+        title_content=$(echo "$title_content" | xargs)  # trim whitespace
+
+        # Split on " - " to get title and content
+        local title="${title_content%% - *}"
+        local content="${title_content#* - }"
+
+        # If no " - " separator, use whole thing as title
+        if [[ "$title" == "$title_content" ]]; then
+            content=""
+        fi
+
+        # Validate we have at least a title
+        [[ -z "$title" ]] && continue
+
+        # Default category if not recognized
+        case "$category" in
+            pattern|correction|decision|gotcha|preference) ;;
+            *) category="pattern" ;;
+        esac
+
+        # Add the lesson using Python manager (with bash fallback)
+        local result=""
+        if [[ -f "$PYTHON_MANAGER" ]]; then
+            result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
+                python3 "$PYTHON_MANAGER" add-ai "$category" "$title" "$content" 2>&1 || true)
+        fi
+
+        # Fall back to bash manager if Python fails
+        if [[ -z "$result" && -x "$BASH_MANAGER" ]]; then
+            # Bash manager doesn't have add-ai, would need to be added
+            # For now just skip bash fallback for AI lessons
+            :
+        fi
+
+        if [[ -n "$result" && "$result" != Error:* ]]; then
+            ((added_count++)) || true
+        fi
+    done <<< "$ai_lessons"
+
+    (( added_count > 0 )) && echo "[lessons] $added_count AI lesson(s) added" >&2
+}
+
+# Detect and process APPROACH patterns in assistant messages
+# Patterns:
+#   APPROACH: <title>                                -> approach add "<title>"
+#   APPROACH UPDATE A###: status <status>            -> approach update A### --status <status>
+#   APPROACH UPDATE A###: tried <outcome> - <desc>   -> approach update A### --tried <outcome> "<desc>"
+#   APPROACH UPDATE A###: next <text>                -> approach update A### --next "<text>"
+#   APPROACH COMPLETE A###                           -> approach complete A###
+process_approaches() {
+    local transcript_path="$1"
+    local project_root="$2"
+    local last_timestamp="$3"
+    local processed_count=0
+
+    # Extract approach patterns from assistant messages
+    local approach_lines=""
+    if [[ -z "$last_timestamp" ]]; then
+        approach_lines=$(jq -r 'select(.type == "assistant") |
+            .message.content[]? | select(.type == "text") | .text' "$transcript_path" 2>/dev/null | \
+            grep -E '^APPROACH( UPDATE| COMPLETE)?:?' || true)
+    else
+        approach_lines=$(jq -r --arg ts "$last_timestamp" '
+            select(.type == "assistant" and .timestamp > $ts) |
+            .message.content[]? | select(.type == "text") | .text' "$transcript_path" 2>/dev/null | \
+            grep -E '^APPROACH( UPDATE| COMPLETE)?:?' || true)
+    fi
+
+    [[ -z "$approach_lines" ]] && return 0
+
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        local result=""
+
+        # Pattern 1: APPROACH: <title> -> add new approach
+        if [[ "$line" =~ ^APPROACH:\ (.+)$ ]]; then
+            local title="${BASH_REMATCH[1]}"
+            # Trim whitespace
+            title=$(echo "$title" | xargs)
+            [[ -z "$title" ]] && continue
+
+            if [[ -f "$PYTHON_MANAGER" ]]; then
+                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
+                    python3 "$PYTHON_MANAGER" approach add "$title" 2>&1 || true)
+            fi
+
+        # Pattern 2: APPROACH UPDATE A###: status <status>
+        elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}):\ status\ (.+)$ ]]; then
+            local approach_id="${BASH_REMATCH[1]}"
+            local status="${BASH_REMATCH[2]}"
+            status=$(echo "$status" | xargs)
+
+            if [[ -f "$PYTHON_MANAGER" ]]; then
+                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
+                    python3 "$PYTHON_MANAGER" approach update "$approach_id" --status "$status" 2>&1 || true)
+            fi
+
+        # Pattern 3: APPROACH UPDATE A###: tried <outcome> - <description>
+        elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}):\ tried\ ([a-z]+)\ -\ (.+)$ ]]; then
+            local approach_id="${BASH_REMATCH[1]}"
+            local outcome="${BASH_REMATCH[2]}"
+            local description="${BASH_REMATCH[3]}"
+            description=$(echo "$description" | xargs)
+
+            if [[ -f "$PYTHON_MANAGER" ]]; then
+                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
+                    python3 "$PYTHON_MANAGER" approach update "$approach_id" --tried "$outcome" "$description" 2>&1 || true)
+            fi
+
+        # Pattern 4: APPROACH UPDATE A###: next <text>
+        elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}):\ next\ (.+)$ ]]; then
+            local approach_id="${BASH_REMATCH[1]}"
+            local next_text="${BASH_REMATCH[2]}"
+            next_text=$(echo "$next_text" | xargs)
+
+            if [[ -f "$PYTHON_MANAGER" ]]; then
+                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
+                    python3 "$PYTHON_MANAGER" approach update "$approach_id" --next "$next_text" 2>&1 || true)
+            fi
+
+        # Pattern 5: APPROACH COMPLETE A###
+        elif [[ "$line" =~ ^APPROACH\ COMPLETE\ ([A-Z][0-9]{3})$ ]]; then
+            local approach_id="${BASH_REMATCH[1]}"
+
+            if [[ -f "$PYTHON_MANAGER" ]]; then
+                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
+                    python3 "$PYTHON_MANAGER" approach complete "$approach_id" 2>&1 || true)
+            fi
+        fi
+
+        # Count successful operations (non-empty result without Error:)
+        if [[ -n "$result" && "$result" != Error:* ]]; then
+            ((processed_count++)) || true
+        fi
+    done <<< "$approach_lines"
+
+    (( processed_count > 0 )) && echo "[approaches] $processed_count approach command(s) processed" >&2
+}
+
 main() {
     is_enabled || exit 0
 
@@ -96,6 +277,12 @@ main() {
     local state_file="$STATE_DIR/$session_id"
     local last_timestamp=""
     [[ -f "$state_file" ]] && last_timestamp=$(cat "$state_file")
+
+    # Process AI LESSON: patterns (adds new AI-generated lessons)
+    process_ai_lessons "$transcript_path" "$project_root" "$last_timestamp"
+
+    # Process APPROACH: patterns (placeholder for Phase 2)
+    process_approaches "$transcript_path" "$project_root" "$last_timestamp"
 
     # Process entries newer than checkpoint
     # Filter by timestamp, extract citations from assistant messages
@@ -144,12 +331,23 @@ main() {
         exit 0
     }
 
-    # Cite each lesson
+    # Cite each lesson (Python first, bash fallback)
     local cited_count=0
     while IFS= read -r citation; do
         [[ -z "$citation" ]] && continue
         local lesson_id=$(echo "$citation" | tr -d '[]')
-        local result=$(PROJECT_DIR="$project_root" "$MANAGER" cite "$lesson_id" 2>&1 || true)
+        local result=""
+
+        # Try Python manager first
+        if [[ -f "$PYTHON_MANAGER" ]]; then
+            result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" python3 "$PYTHON_MANAGER" cite "$lesson_id" 2>&1 || true)
+        fi
+
+        # Fall back to bash manager if Python fails
+        if [[ -z "$result" && -x "$BASH_MANAGER" ]]; then
+            result=$(PROJECT_DIR="$project_root" "$BASH_MANAGER" cite "$lesson_id" 2>&1 || true)
+        fi
+
         if [[ "$result" == OK:* ]]; then
             ((cited_count++)) || true
         fi

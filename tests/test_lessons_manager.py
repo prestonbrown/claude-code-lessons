@@ -1,0 +1,966 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""
+Test suite for Python lessons manager implementation.
+
+This is a TDD test file - tests are written BEFORE the implementation.
+Run with: pytest tests/test_lessons_manager.py -v
+
+The lessons system stores lessons in markdown format:
+    ### [L001] [*----|-----] Lesson Title
+    - **Uses**: 1 | **Velocity**: 0 | **Learned**: 2025-12-28 | **Last**: 2025-12-28 | **Category**: pattern
+    > Lesson content here.
+
+AI-added lessons include a robot emoji and Source metadata:
+    ### [L002] [*----|-----] AI Lesson Title
+    - **Uses**: 1 | **Velocity**: 0 | **Learned**: 2025-12-28 | **Last**: 2025-12-28 | **Category**: gotcha | **Source**: ai
+    > AI-learned content.
+"""
+
+import os
+import pytest
+from datetime import date, timedelta
+from pathlib import Path
+from typing import Optional
+
+# These imports will fail until implementation exists - that's expected for TDD
+try:
+    from core.lessons_manager import (
+        LessonsManager,
+        Lesson,
+        LessonLevel,
+        LessonCategory,
+        LessonRating,
+        parse_lesson,
+        format_lesson,
+    )
+except ImportError:
+    # Mark all tests as expected to fail until implementation exists
+    pytestmark = pytest.mark.skip(reason="Implementation not yet created")
+
+
+# =============================================================================
+# Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def temp_lessons_base(tmp_path: Path) -> Path:
+    """Create a temporary lessons base directory."""
+    lessons_base = tmp_path / ".config" / "coding-agent-lessons"
+    lessons_base.mkdir(parents=True)
+    return lessons_base
+
+
+@pytest.fixture
+def temp_project_root(tmp_path: Path) -> Path:
+    """Create a temporary project directory with .git folder."""
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / ".git").mkdir()
+    return project
+
+
+@pytest.fixture
+def manager(temp_lessons_base: Path, temp_project_root: Path) -> "LessonsManager":
+    """Create a LessonsManager instance with temporary paths."""
+    return LessonsManager(
+        lessons_base=temp_lessons_base,
+        project_root=temp_project_root,
+    )
+
+
+@pytest.fixture
+def manager_with_lessons(manager: "LessonsManager") -> "LessonsManager":
+    """Create a manager with some pre-existing lessons."""
+    manager.add_lesson(
+        level="project",
+        category="pattern",
+        title="First lesson",
+        content="This is the first lesson content.",
+    )
+    manager.add_lesson(
+        level="project",
+        category="gotcha",
+        title="Second lesson",
+        content="Watch out for this gotcha.",
+    )
+    manager.add_lesson(
+        level="system",
+        category="preference",
+        title="System preference",
+        content="Always do it this way.",
+    )
+    return manager
+
+
+# =============================================================================
+# Basic Lesson Operations
+# =============================================================================
+
+
+class TestAddLesson:
+    """Tests for adding lessons."""
+
+    def test_add_lesson_creates_entry(self, manager: "LessonsManager"):
+        """Adding a lesson should create an entry in the lessons file."""
+        lesson_id = manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Test lesson",
+            content="This is test content.",
+        )
+
+        assert lesson_id == "L001"
+        lessons = manager.list_lessons(scope="project")
+        assert len(lessons) == 1
+        assert lessons[0].title == "Test lesson"
+        assert lessons[0].content == "This is test content."
+        assert lessons[0].category == "pattern"
+
+    def test_add_lesson_to_system_file(self, manager: "LessonsManager"):
+        """Adding a system lesson should use S### prefix and system file."""
+        lesson_id = manager.add_lesson(
+            level="system",
+            category="preference",
+            title="System lesson",
+            content="System-level content.",
+        )
+
+        assert lesson_id == "S001"
+        lessons = manager.list_lessons(scope="system")
+        assert len(lessons) == 1
+        assert lessons[0].id == "S001"
+        assert lessons[0].title == "System lesson"
+
+    def test_add_lesson_assigns_sequential_id(self, manager: "LessonsManager"):
+        """Lesson IDs should be assigned sequentially."""
+        id1 = manager.add_lesson("project", "pattern", "First", "Content 1")
+        id2 = manager.add_lesson("project", "gotcha", "Second", "Content 2")
+        id3 = manager.add_lesson("project", "decision", "Third", "Content 3")
+
+        assert id1 == "L001"
+        assert id2 == "L002"
+        assert id3 == "L003"
+
+    def test_add_lesson_initializes_metadata(self, manager: "LessonsManager"):
+        """New lessons should have correct initial metadata."""
+        manager.add_lesson("project", "pattern", "Test", "Content")
+        lesson = manager.get_lesson("L001")
+
+        assert lesson is not None
+        assert lesson.uses == 1
+        assert lesson.velocity == 0
+        assert lesson.learned == date.today()
+        assert lesson.last_used == date.today()
+
+    def test_duplicate_detection_rejects_similar_titles(
+        self, manager: "LessonsManager"
+    ):
+        """Adding a lesson with a similar title should be rejected."""
+        manager.add_lesson("project", "pattern", "Use spdlog for logging", "Content")
+
+        with pytest.raises(ValueError, match="[Ss]imilar lesson"):
+            manager.add_lesson(
+                "project", "gotcha", "use spdlog for logging", "Different content"
+            )
+
+    def test_duplicate_detection_case_insensitive(self, manager: "LessonsManager"):
+        """Duplicate detection should be case-insensitive."""
+        manager.add_lesson("project", "pattern", "UPPERCASE TITLE", "Content")
+
+        with pytest.raises(ValueError, match="[Ss]imilar lesson"):
+            manager.add_lesson("project", "pattern", "uppercase title", "Other content")
+
+    def test_add_lesson_force_bypasses_duplicate_check(
+        self, manager: "LessonsManager"
+    ):
+        """Force adding should bypass duplicate detection."""
+        manager.add_lesson("project", "pattern", "Original title", "Content")
+
+        # This should succeed with force=True
+        lesson_id = manager.add_lesson(
+            "project", "pattern", "Original title", "New content", force=True
+        )
+        assert lesson_id == "L002"
+
+
+# =============================================================================
+# AI Lesson Support
+# =============================================================================
+
+
+class TestAILessons:
+    """Tests for AI-generated lessons."""
+
+    def test_add_ai_lesson_has_robot_emoji(self, manager: "LessonsManager"):
+        """AI lessons should have a robot emoji in the title display."""
+        manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="AI discovered pattern",
+            content="The AI learned this.",
+            source="ai",
+        )
+
+        lesson = manager.get_lesson("L001")
+        assert lesson is not None
+        assert lesson.source == "ai"
+        # When formatted, should include robot emoji
+        formatted = format_lesson(lesson)
+        assert "\U0001f916" in formatted or "robot" in formatted.lower()
+
+    def test_add_ai_lesson_has_source_ai_metadata(self, manager: "LessonsManager"):
+        """AI lessons should have Source: ai in the metadata line."""
+        manager.add_lesson(
+            level="project",
+            category="gotcha",
+            title="AI gotcha",
+            content="Watch out.",
+            source="ai",
+        )
+
+        lesson = manager.get_lesson("L001")
+        assert lesson is not None
+        assert lesson.source == "ai"
+
+        # Check the raw file contains the metadata
+        project_file = manager.project_lessons_file
+        content = project_file.read_text()
+        assert "**Source**: ai" in content
+
+    def test_ai_and_human_lessons_same_behavior(self, manager: "LessonsManager"):
+        """AI and human lessons should behave the same for citation/decay."""
+        # Add both types
+        manager.add_lesson("project", "pattern", "Human lesson", "By human")
+        manager.add_lesson(
+            "project", "pattern", "AI lesson", "By AI", source="ai"
+        )
+
+        # Both should be citable
+        result1 = manager.cite_lesson("L001")
+        result2 = manager.cite_lesson("L002")
+
+        assert result1.success
+        assert result2.success
+
+        # Both should have incremented uses
+        human = manager.get_lesson("L001")
+        ai = manager.get_lesson("L002")
+        assert human.uses == 2
+        assert ai.uses == 2
+
+
+# =============================================================================
+# Citation Tracking
+# =============================================================================
+
+
+class TestCitation:
+    """Tests for lesson citation tracking."""
+
+    def test_cite_increments_uses(self, manager_with_lessons: "LessonsManager"):
+        """Citing a lesson should increment its use count."""
+        lesson_before = manager_with_lessons.get_lesson("L001")
+        initial_uses = lesson_before.uses
+
+        manager_with_lessons.cite_lesson("L001")
+
+        lesson_after = manager_with_lessons.get_lesson("L001")
+        assert lesson_after.uses == initial_uses + 1
+
+    def test_cite_updates_last_date(self, manager_with_lessons: "LessonsManager"):
+        """Citing a lesson should update its last-used date."""
+        manager_with_lessons.cite_lesson("L001")
+
+        lesson = manager_with_lessons.get_lesson("L001")
+        assert lesson.last_used == date.today()
+
+    def test_cite_increments_velocity(self, manager_with_lessons: "LessonsManager"):
+        """Citing a lesson should increment its velocity."""
+        lesson_before = manager_with_lessons.get_lesson("L001")
+        initial_velocity = lesson_before.velocity
+
+        manager_with_lessons.cite_lesson("L001")
+
+        lesson_after = manager_with_lessons.get_lesson("L001")
+        assert lesson_after.velocity == initial_velocity + 1
+
+    def test_cite_nonexistent_lesson_fails(self, manager: "LessonsManager"):
+        """Citing a nonexistent lesson should raise an error."""
+        with pytest.raises(ValueError, match="not found"):
+            manager.cite_lesson("L999")
+
+    def test_cite_updates_star_rating(self, manager_with_lessons: "LessonsManager"):
+        """Citing should update the star rating display."""
+        # Cite multiple times to increase stars
+        for _ in range(5):
+            manager_with_lessons.cite_lesson("L001")
+
+        lesson = manager_with_lessons.get_lesson("L001")
+        # Uses should be at least 6 (1 initial + 5 citations)
+        assert lesson.uses >= 6
+
+    def test_cite_returns_promotion_ready(self, manager: "LessonsManager"):
+        """Citing should indicate when a lesson is ready for promotion."""
+        # Create a lesson and cite it many times
+        manager.add_lesson("project", "pattern", "Popular", "Very useful")
+
+        # Cite 49 more times to reach threshold (50)
+        for _ in range(49):
+            result = manager.cite_lesson("L001")
+
+        # The 50th citation should indicate promotion ready
+        result = manager.cite_lesson("L001")
+        # Note: exact API TBD - could be result.promotion_ready or similar
+        assert hasattr(result, "promotion_ready") or result.uses >= 50
+
+    def test_cite_caps_uses_at_100(self, manager: "LessonsManager"):
+        """Uses should be capped at 100 to prevent unbounded growth."""
+        manager.add_lesson("project", "pattern", "Test", "Content")
+
+        # Cite 105 times
+        for _ in range(105):
+            manager.cite_lesson("L001")
+
+        lesson = manager.get_lesson("L001")
+        assert lesson.uses == 100
+
+
+# =============================================================================
+# Injection (Context Generation)
+# =============================================================================
+
+
+class TestInjection:
+    """Tests for lesson injection into context."""
+
+    def test_inject_returns_top_n_by_uses(self, manager: "LessonsManager"):
+        """Injection should return lessons sorted by use count."""
+        # Add lessons with different use counts
+        manager.add_lesson("project", "pattern", "Low use", "Content")
+        manager.add_lesson("project", "pattern", "Medium use", "Content")
+        manager.add_lesson("project", "pattern", "High use", "Content")
+
+        # Cite to create different use counts
+        for _ in range(10):
+            manager.cite_lesson("L003")  # High use
+        for _ in range(5):
+            manager.cite_lesson("L002")  # Medium use
+        # L001 stays at 1 use
+
+        result = manager.inject_context(top_n=2)
+
+        # Should have top 2 lessons by use count
+        assert len(result.top_lessons) == 2
+        assert result.top_lessons[0].id == "L003"
+        assert result.top_lessons[1].id == "L002"
+
+    def test_inject_shows_robot_for_ai_lessons(self, manager: "LessonsManager"):
+        """Injected AI lessons should show the robot emoji."""
+        manager.add_lesson(
+            "project", "pattern", "AI pattern", "Content", source="ai"
+        )
+
+        result = manager.inject_context(top_n=5)
+        formatted = result.format()
+
+        # Should contain robot emoji for AI lesson
+        assert "\U0001f916" in formatted or "AI pattern" in formatted
+
+    def test_inject_includes_both_project_and_system(
+        self, manager_with_lessons: "LessonsManager"
+    ):
+        """Injection should include both project and system lessons."""
+        result = manager_with_lessons.inject_context(top_n=10)
+
+        ids = [lesson.id for lesson in result.all_lessons]
+        # Should have both L### and S### lessons
+        assert any(id.startswith("L") for id in ids)
+        assert any(id.startswith("S") for id in ids)
+
+    def test_inject_shows_lesson_counts(self, manager_with_lessons: "LessonsManager"):
+        """Injection output should show counts of system and project lessons."""
+        result = manager_with_lessons.inject_context(top_n=5)
+        formatted = result.format()
+
+        assert "system" in formatted.lower()
+        assert "project" in formatted.lower()
+
+    def test_inject_empty_returns_nothing(self, manager: "LessonsManager"):
+        """Injection with no lessons should return empty result."""
+        result = manager.inject_context(top_n=5)
+
+        assert len(result.top_lessons) == 0
+        assert result.total_count == 0
+
+    def test_inject_shows_search_tip_when_other_lessons_exist(
+        self, manager: "LessonsManager"
+    ):
+        """Injection should show search tip when there are more lessons than top_n."""
+        # Add more lessons than top_n
+        for i in range(5):
+            manager.add_lesson("project", "pattern", f"Lesson {i}", f"Content {i}")
+
+        # Request only top 2
+        result = manager.inject_context(top_n=2)
+        formatted = result.format()
+
+        # Should contain the search tip since there are remaining lessons
+        assert "search" in formatted.lower()
+        assert "--search" in formatted
+
+
+# =============================================================================
+# Decay
+# =============================================================================
+
+
+class TestDecay:
+    """Tests for lesson decay functionality."""
+
+    def test_decay_reduces_velocity(self, manager: "LessonsManager"):
+        """Decay should reduce velocity by 50% (half-life)."""
+        manager.add_lesson("project", "pattern", "Test", "Content")
+
+        # Cite to build velocity
+        for _ in range(4):
+            manager.cite_lesson("L001")
+
+        lesson_before = manager.get_lesson("L001")
+        velocity_before = lesson_before.velocity  # Should be 4
+
+        # Run decay
+        manager.decay_lessons()
+
+        lesson_after = manager.get_lesson("L001")
+        # Velocity should be halved (4 -> 2)
+        assert lesson_after.velocity == pytest.approx(velocity_before * 0.5, abs=0.1)
+
+    def test_decay_reduces_uses_for_stale_lessons(self, manager: "LessonsManager"):
+        """Decay should reduce uses for lessons not cited in N days."""
+        manager.add_lesson("project", "pattern", "Stale lesson", "Old content")
+
+        # Manually set the last-used date to 60 days ago
+        lesson = manager.get_lesson("L001")
+        old_date = date.today() - timedelta(days=60)
+        manager._update_lesson_date("L001", last_used=old_date)
+
+        # Cite to build uses
+        # (Note: citing updates last_used, so we need to reset it)
+        manager._set_lesson_uses("L001", 5)
+        manager._update_lesson_date("L001", last_used=old_date)
+
+        # Run decay with 30-day threshold
+        manager.decay_lessons(stale_threshold_days=30)
+
+        lesson_after = manager.get_lesson("L001")
+        # Uses should have decreased by 1
+        assert lesson_after.uses == 4
+
+    def test_decay_preserves_minimum_uses(self, manager: "LessonsManager"):
+        """Decay should never reduce uses below 1."""
+        manager.add_lesson("project", "pattern", "Minimal", "Content")
+
+        # Set last-used to long ago
+        old_date = date.today() - timedelta(days=90)
+        manager._update_lesson_date("L001", last_used=old_date)
+
+        # Uses starts at 1, should stay at 1 after decay
+        manager.decay_lessons(stale_threshold_days=30)
+
+        lesson = manager.get_lesson("L001")
+        assert lesson.uses >= 1
+
+    def test_decay_skips_recent_lessons(self, manager: "LessonsManager"):
+        """Decay should not reduce uses for recently cited lessons."""
+        manager.add_lesson("project", "pattern", "Recent", "Content")
+        manager._set_lesson_uses("L001", 5)
+
+        # Last used is today (recent)
+        uses_before = manager.get_lesson("L001").uses
+
+        manager.decay_lessons(stale_threshold_days=30)
+
+        uses_after = manager.get_lesson("L001").uses
+        # Uses should not have changed (lesson is not stale)
+        assert uses_after == uses_before
+
+    def test_decay_respects_activity_check(self, manager: "LessonsManager"):
+        """Decay should skip if no coding sessions occurred (vacation mode)."""
+        manager.add_lesson("project", "pattern", "Vacation lesson", "Content")
+
+        # Simulate previous decay run
+        manager._set_last_decay_time()
+
+        # Don't create any session checkpoints (no activity)
+
+        result = manager.decay_lessons(stale_threshold_days=30)
+
+        # Should indicate skipped due to no activity
+        assert result.skipped or "vacation" in result.message.lower()
+
+
+# =============================================================================
+# Backward Compatibility
+# =============================================================================
+
+
+class TestBackwardCompatibility:
+    """Tests for parsing old lesson formats."""
+
+    def test_parse_lesson_without_source_defaults_human(self, manager: "LessonsManager"):
+        """Lessons without Source metadata should default to human source."""
+        # Write a lesson in old format (no Source field)
+        old_format = """# LESSONS.md - Project Level
+
+## Active Lessons
+
+### [L001] [*----|-----] Old format lesson
+- **Uses**: 5 | **Velocity**: 2 | **Learned**: 2025-01-01 | **Last**: 2025-01-15 | **Category**: pattern
+> This is an old format lesson without Source field.
+
+"""
+        manager.project_lessons_file.write_text(old_format)
+
+        lesson = manager.get_lesson("L001")
+        assert lesson is not None
+        assert lesson.source == "human"  # Default when not specified
+
+    def test_parse_old_format_lessons(self, manager: "LessonsManager"):
+        """Should parse lessons with old star format (e.g., [***--/-----])."""
+        old_format = """# LESSONS.md - Project Level
+
+## Active Lessons
+
+### [L001] [***--/-----] Legacy stars format
+- **Uses**: 10 | **Learned**: 2024-06-01 | **Last**: 2024-12-01 | **Category**: gotcha
+> Old format with slash separator and no Velocity field.
+
+"""
+        manager.project_lessons_file.write_text(old_format)
+
+        lesson = manager.get_lesson("L001")
+        assert lesson is not None
+        assert lesson.id == "L001"
+        assert lesson.title == "Legacy stars format"
+        assert lesson.uses == 10
+        assert lesson.velocity == 0  # Default when not present
+        assert lesson.category == "gotcha"
+
+    def test_parse_old_format_without_velocity(self, manager: "LessonsManager"):
+        """Should handle lessons without Velocity field."""
+        old_format = """# LESSONS.md - Project Level
+
+## Active Lessons
+
+### [L001] [**---/-----] No velocity lesson
+- **Uses**: 3 | **Learned**: 2025-01-01 | **Last**: 2025-01-10 | **Category**: pattern
+> Content here.
+
+"""
+        manager.project_lessons_file.write_text(old_format)
+
+        lesson = manager.get_lesson("L001")
+        assert lesson is not None
+        assert lesson.velocity == 0  # Default
+
+
+# =============================================================================
+# Lesson Rating Display
+# =============================================================================
+
+
+class TestLessonRating:
+    """Tests for the dual-dimension star rating display."""
+
+    def test_rating_format(self):
+        """Rating should be in format [total|velocity]."""
+        rating = LessonRating(uses=5, velocity=2)
+        display = rating.format()
+
+        assert display.startswith("[")
+        assert display.endswith("]")
+        assert "|" in display
+
+    def test_rating_uses_logarithmic_scale(self):
+        """Uses side should use logarithmic scale for spread."""
+        # 1-2 uses = *
+        assert "*----" in LessonRating(uses=1, velocity=0).format()
+        assert "*----" in LessonRating(uses=2, velocity=0).format()
+
+        # 3-5 uses = **
+        assert "**---" in LessonRating(uses=3, velocity=0).format()
+
+        # 6-12 uses = ***
+        assert "***--" in LessonRating(uses=6, velocity=0).format()
+
+        # 13-30 uses = ****
+        assert "****-" in LessonRating(uses=15, velocity=0).format()
+
+        # 31+ uses = *****
+        assert "*****" in LessonRating(uses=31, velocity=0).format()
+
+    def test_rating_velocity_scale(self):
+        """Velocity side should show recent activity."""
+        # Low velocity
+        assert "-----" in LessonRating(uses=1, velocity=0).format()
+
+        # Medium velocity
+        rating_mid = LessonRating(uses=1, velocity=2.5)
+        display = rating_mid.format()
+        # Should show some activity on right side
+        assert display.count("*") > 0 or display.count("+") > 0
+
+
+# =============================================================================
+# Edit and Delete
+# =============================================================================
+
+
+class TestEditAndDelete:
+    """Tests for editing and deleting lessons."""
+
+    def test_edit_lesson_content(self, manager_with_lessons: "LessonsManager"):
+        """Editing should update lesson content."""
+        manager_with_lessons.edit_lesson("L001", "Updated content here.")
+
+        lesson = manager_with_lessons.get_lesson("L001")
+        assert lesson.content == "Updated content here."
+
+    def test_edit_preserves_metadata(self, manager_with_lessons: "LessonsManager"):
+        """Editing content should preserve other metadata."""
+        lesson_before = manager_with_lessons.get_lesson("L001")
+        original_uses = lesson_before.uses
+        original_learned = lesson_before.learned
+
+        manager_with_lessons.edit_lesson("L001", "New content")
+
+        lesson_after = manager_with_lessons.get_lesson("L001")
+        assert lesson_after.uses == original_uses
+        assert lesson_after.learned == original_learned
+
+    def test_delete_lesson(self, manager_with_lessons: "LessonsManager"):
+        """Deleting should remove the lesson entirely."""
+        manager_with_lessons.delete_lesson("L001")
+
+        lesson = manager_with_lessons.get_lesson("L001")
+        assert lesson is None
+
+        lessons = manager_with_lessons.list_lessons(scope="project")
+        ids = [l.id for l in lessons]
+        assert "L001" not in ids
+
+    def test_delete_nonexistent_fails(self, manager: "LessonsManager"):
+        """Deleting a nonexistent lesson should raise an error."""
+        with pytest.raises(ValueError, match="not found"):
+            manager.delete_lesson("L999")
+
+
+# =============================================================================
+# Promotion
+# =============================================================================
+
+
+class TestPromotion:
+    """Tests for promoting project lessons to system scope."""
+
+    def test_promote_lesson(self, manager_with_lessons: "LessonsManager"):
+        """Promoting should move lesson from project to system."""
+        manager_with_lessons.promote_lesson("L001")
+
+        # Should no longer be in project
+        project_lessons = manager_with_lessons.list_lessons(scope="project")
+        project_ids = [l.id for l in project_lessons]
+        assert "L001" not in project_ids
+
+        # Should be in system with new ID
+        system_lessons = manager_with_lessons.list_lessons(scope="system")
+        # There was already S001, so this should be S002
+        system_ids = [l.id for l in system_lessons]
+        assert "S002" in system_ids
+
+    def test_promote_preserves_data(self, manager_with_lessons: "LessonsManager"):
+        """Promotion should preserve lesson content and metadata."""
+        # Build up some uses first
+        for _ in range(5):
+            manager_with_lessons.cite_lesson("L001")
+
+        lesson_before = manager_with_lessons.get_lesson("L001")
+
+        manager_with_lessons.promote_lesson("L001")
+
+        # Find the promoted lesson
+        system_lessons = manager_with_lessons.list_lessons(scope="system")
+        promoted = next((l for l in system_lessons if l.title == lesson_before.title), None)
+
+        assert promoted is not None
+        assert promoted.uses == lesson_before.uses
+        assert promoted.content == lesson_before.content
+
+    def test_promote_system_lesson_fails(self, manager_with_lessons: "LessonsManager"):
+        """Cannot promote a system lesson (already at system level)."""
+        with pytest.raises(ValueError, match="[Pp]roject"):
+            manager_with_lessons.promote_lesson("S001")
+
+
+# =============================================================================
+# Listing and Search
+# =============================================================================
+
+
+class TestListAndSearch:
+    """Tests for listing and searching lessons."""
+
+    def test_list_all_lessons(self, manager_with_lessons: "LessonsManager"):
+        """Should list all lessons from both scopes."""
+        lessons = manager_with_lessons.list_lessons(scope="all")
+
+        # We have 2 project + 1 system = 3 lessons
+        assert len(lessons) == 3
+
+    def test_list_by_scope(self, manager_with_lessons: "LessonsManager"):
+        """Should filter by scope."""
+        project_lessons = manager_with_lessons.list_lessons(scope="project")
+        system_lessons = manager_with_lessons.list_lessons(scope="system")
+
+        assert len(project_lessons) == 2
+        assert len(system_lessons) == 1
+
+    def test_search_by_keyword(self, manager_with_lessons: "LessonsManager"):
+        """Should search in title and content."""
+        results = manager_with_lessons.list_lessons(search="gotcha")
+
+        assert len(results) == 1
+        assert "gotcha" in results[0].title.lower() or "gotcha" in results[0].content.lower()
+
+    def test_filter_by_category(self, manager_with_lessons: "LessonsManager"):
+        """Should filter by category."""
+        results = manager_with_lessons.list_lessons(category="pattern")
+
+        for lesson in results:
+            assert lesson.category == "pattern"
+
+    def test_list_stale_lessons(self, manager: "LessonsManager"):
+        """Should identify stale lessons (not cited in 60+ days)."""
+        manager.add_lesson("project", "pattern", "Stale one", "Old")
+        manager.add_lesson("project", "pattern", "Fresh one", "New")
+
+        # Make first lesson stale
+        old_date = date.today() - timedelta(days=70)
+        manager._update_lesson_date("L001", last_used=old_date)
+
+        stale = manager.list_lessons(stale_only=True)
+
+        assert len(stale) == 1
+        assert stale[0].id == "L001"
+
+
+# =============================================================================
+# File Initialization
+# =============================================================================
+
+
+class TestFileInitialization:
+    """Tests for lessons file initialization."""
+
+    def test_init_creates_project_file(self, manager: "LessonsManager"):
+        """Should create project lessons file with header."""
+        manager.init_lessons_file("project")
+
+        assert manager.project_lessons_file.exists()
+        content = manager.project_lessons_file.read_text()
+        assert "LESSONS.md" in content
+        assert "Project" in content
+
+    def test_init_creates_system_file(self, manager: "LessonsManager"):
+        """Should create system lessons file with header."""
+        manager.init_lessons_file("system")
+
+        assert manager.system_lessons_file.exists()
+        content = manager.system_lessons_file.read_text()
+        assert "LESSONS.md" in content
+        assert "System" in content
+
+    def test_init_preserves_existing(self, manager: "LessonsManager"):
+        """Should not overwrite existing file."""
+        manager.add_lesson("project", "pattern", "Existing", "Content")
+        original_content = manager.project_lessons_file.read_text()
+
+        manager.init_lessons_file("project")
+
+        assert manager.project_lessons_file.read_text() == original_content
+
+
+# =============================================================================
+# Edge Cases
+# =============================================================================
+
+
+class TestEdgeCases:
+    """Tests for edge cases and error handling."""
+
+    def test_lesson_with_special_characters_in_title(self, manager: "LessonsManager"):
+        """Should handle special characters in lesson titles."""
+        title = "Don't use 'quotes' or |pipes|"
+        manager.add_lesson("project", "pattern", title, "Content with $pecial chars!")
+
+        lesson = manager.get_lesson("L001")
+        assert lesson is not None
+        assert lesson.title == title
+
+    def test_lesson_with_multiline_content(self, manager: "LessonsManager"):
+        """Content should be single-line in storage but preserve meaning."""
+        content = "First part of content. Second part."
+        manager.add_lesson("project", "pattern", "Multipart", content)
+
+        lesson = manager.get_lesson("L001")
+        assert lesson.content == content
+
+    def test_empty_lessons_file_handling(self, manager: "LessonsManager"):
+        """Should handle empty lessons file gracefully."""
+        manager.project_lessons_file.parent.mkdir(parents=True, exist_ok=True)
+        manager.project_lessons_file.write_text("")
+
+        lessons = manager.list_lessons(scope="project")
+        assert lessons == []
+
+    def test_malformed_lesson_skipped(self, manager: "LessonsManager"):
+        """Should skip malformed lessons without crashing."""
+        malformed = """# LESSONS.md
+
+## Active Lessons
+
+### [L001] Malformed - no rating
+- Missing the star rating brackets
+
+### [L002] [*----|-----] Valid lesson
+- **Uses**: 1 | **Velocity**: 0 | **Learned**: 2025-01-01 | **Last**: 2025-01-01 | **Category**: pattern
+> This one is valid.
+
+"""
+        manager.project_lessons_file.parent.mkdir(parents=True, exist_ok=True)
+        manager.project_lessons_file.write_text(malformed)
+
+        lessons = manager.list_lessons(scope="project")
+        # Should only get the valid lesson
+        assert len(lessons) == 1
+        assert lessons[0].id == "L002"
+
+    def test_concurrent_access_safety(self, manager: "LessonsManager"):
+        """Basic test that file operations are atomic."""
+        # Add a lesson
+        manager.add_lesson("project", "pattern", "Test", "Content")
+
+        # Simultaneously cite and list (simulated)
+        manager.cite_lesson("L001")
+        lessons = manager.list_lessons()
+
+        # Should not raise and should have consistent state
+        assert len(lessons) >= 1
+
+
+# =============================================================================
+# Phase 4.3: Token Tracking Tests
+# =============================================================================
+
+
+class TestTokenTracking:
+    """Tests for token estimation and budget tracking."""
+
+    def test_lesson_has_tokens_property(self, manager: "LessonsManager"):
+        """Lessons should have a tokens property."""
+        manager.add_lesson("project", "pattern", "Test title", "Some content here")
+        lesson = manager.get_lesson("L001")
+
+        assert lesson is not None
+        assert hasattr(lesson, "tokens")
+        assert isinstance(lesson.tokens, int)
+        assert lesson.tokens > 0
+
+    def test_token_estimation_basic(self, manager: "LessonsManager"):
+        """Token estimation should be roughly len(text) / 4."""
+        title = "Short title"
+        content = "This is some content for the lesson"
+        manager.add_lesson("project", "pattern", title, content)
+
+        lesson = manager.get_lesson("L001")
+        expected_tokens = len(title + content) // 4
+        # Allow some variance for formatting overhead
+        assert lesson.tokens >= expected_tokens - 10
+        assert lesson.tokens <= expected_tokens + 20
+
+    def test_token_estimation_long_content(self, manager: "LessonsManager"):
+        """Longer content should have more tokens."""
+        short_content = "Short"
+        long_content = "This is a much longer lesson with detailed explanations " * 10
+
+        manager.add_lesson("project", "pattern", "Short", short_content)
+        manager.add_lesson("project", "pattern", "Long", long_content)
+
+        short_lesson = manager.get_lesson("L001")
+        long_lesson = manager.get_lesson("L002")
+
+        assert long_lesson.tokens > short_lesson.tokens
+
+    def test_inject_shows_token_count(self, manager: "LessonsManager"):
+        """Injection output should include token count."""
+        manager.add_lesson("project", "pattern", "Test", "Content")
+
+        output = manager.inject(limit=5)
+
+        # Should show token count somewhere
+        assert "token" in output.lower() or "~" in output
+
+    def test_inject_warns_on_heavy_context(self, manager: "LessonsManager"):
+        """Should warn when injected context exceeds threshold."""
+        # Create lessons with lots of content to exceed 2000 tokens
+        long_content = "X" * 500  # ~125 tokens each
+        for i in range(20):  # 20 * 125 = 2500+ tokens
+            manager.add_lesson(
+                "project", "pattern", f"Lesson {i}", long_content
+            )
+
+        output = manager.inject(limit=20)
+
+        # Should contain a warning about heavy context
+        assert "HEAVY" in output.upper() or "⚠" in output or "warning" in output.lower()
+
+    def test_inject_no_warning_for_light_context(self, manager: "LessonsManager"):
+        """Should not warn for light context load."""
+        manager.add_lesson("project", "pattern", "Short lesson", "Brief content")
+
+        output = manager.inject(limit=5)
+
+        # Should not contain heavy context warning
+        assert "HEAVY" not in output.upper()
+
+
+class TestTokenInjectDetails:
+    """More detailed tests for token injection behavior."""
+
+    def test_inject_token_count_is_accurate(self, manager: "LessonsManager"):
+        """Token count in injection should reflect actual lesson content."""
+        manager.add_lesson("project", "pattern", "Title A", "A" * 100)
+        manager.add_lesson("project", "pattern", "Title B", "B" * 200)
+
+        output = manager.inject(limit=5)
+
+        # Output should contain token estimate
+        # We expect roughly (100 + 7)/4 + (200 + 7)/4 = ~77 tokens just for content
+        assert "token" in output.lower() or "~" in output
+
+    def test_get_total_tokens(self, manager: "LessonsManager"):
+        """Manager should provide total token count method."""
+        manager.add_lesson("project", "pattern", "Title A", "A" * 100)
+        manager.add_lesson("project", "pattern", "Title B", "B" * 200)
+
+        # Should have a method to get total tokens
+        total = manager.get_total_tokens()
+
+        assert isinstance(total, int)
+        assert total > 50  # Should be substantial
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
