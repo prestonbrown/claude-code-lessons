@@ -94,6 +94,7 @@ class Lesson:
     category: str
     source: str = "human"  # 'human' or 'ai'
     level: str = "project"  # 'project' or 'system'
+    promotable: bool = True  # False = never promote to system level
 
     @property
     def tokens(self) -> int:
@@ -336,6 +337,9 @@ def parse_lesson(lines: List[str], start_idx: int, level: str) -> Optional[tuple
         except ValueError:
             return None  # Malformed data, skip this lesson
 
+    # Check for promotable flag (defaults to True if not present)
+    promotable = "**Promotable**: no" not in meta_line
+
     # Parse content line
     content = ""
     end_idx = start_idx + 2
@@ -360,6 +364,7 @@ def parse_lesson(lines: List[str], start_idx: int, level: str) -> Optional[tuple
         category=category,
         source=source,
         level=level,
+        promotable=promotable,
     )
 
     return (lesson, end_idx)
@@ -384,6 +389,8 @@ def format_lesson(lesson: Lesson) -> str:
     ]
     if lesson.source == "ai":
         meta_parts.append("**Source**: ai")
+    if not lesson.promotable:
+        meta_parts.append("**Promotable**: no")
 
     meta_line = f"- {' | '.join(meta_parts)}"
     content_line = f"> {lesson.content}"
@@ -504,6 +511,7 @@ class LessonsManager:
         content: str,
         source: str = "human",
         force: bool = False,
+        promotable: bool = True,
     ) -> str:
         """
         Add a new lesson.
@@ -515,6 +523,7 @@ class LessonsManager:
             content: Lesson content
             source: 'human' or 'ai'
             force: If True, bypass duplicate detection
+            promotable: If False, lesson will never be promoted to system level
 
         Returns:
             The assigned lesson ID (e.g., 'L001' or 'S001')
@@ -554,6 +563,7 @@ class LessonsManager:
                 category=category,
                 source=source,
                 level=level,
+                promotable=promotable,
             )
 
             # Append to file
@@ -580,6 +590,7 @@ class LessonsManager:
         category: str,
         title: str,
         content: str,
+        promotable: bool = True,
     ) -> str:
         """
         Convenience method to add an AI-generated lesson.
@@ -589,11 +600,14 @@ class LessonsManager:
             category: Lesson category
             title: Lesson title
             content: Lesson content
+            promotable: If False, lesson will never be promoted to system level
 
         Returns:
             The assigned lesson ID
         """
-        return self.add_lesson(level, category, title, content, source="ai")
+        return self.add_lesson(
+            level, category, title, content, source="ai", promotable=promotable
+        )
 
     def get_lesson(self, lesson_id: str) -> Optional[Lesson]:
         """
@@ -666,7 +680,9 @@ class LessonsManager:
             self._write_lessons_file(file_path, lessons, level)
 
         promotion_ready = (
-            lesson_id.startswith("L") and new_uses >= SYSTEM_PROMOTION_THRESHOLD
+            lesson_id.startswith("L")
+            and new_uses >= SYSTEM_PROMOTION_THRESHOLD
+            and target.promotable
         )
 
         # Log citation
@@ -2320,6 +2336,9 @@ def main():
     add_parser.add_argument("content", help="Lesson content")
     add_parser.add_argument("--force", action="store_true", help="Skip duplicate check")
     add_parser.add_argument("--system", action="store_true", help="Add as system lesson")
+    add_parser.add_argument(
+        "--no-promote", action="store_true", help="Never promote to system level"
+    )
 
     # add-ai command
     add_ai_parser = subparsers.add_parser("add-ai", help="Add an AI-generated lesson")
@@ -2327,6 +2346,9 @@ def main():
     add_ai_parser.add_argument("title", help="Lesson title")
     add_ai_parser.add_argument("content", help="Lesson content")
     add_ai_parser.add_argument("--system", action="store_true", help="Add as system lesson")
+    add_ai_parser.add_argument(
+        "--no-promote", action="store_true", help="Never promote to system level"
+    )
 
     # add-system command (alias for add --system, for backward compatibility)
     add_system_parser = subparsers.add_parser(
@@ -2451,24 +2473,30 @@ def main():
     try:
         if args.command == "add":
             level = "system" if args.system else "project"
+            promotable = not getattr(args, "no_promote", False)
             lesson_id = manager.add_lesson(
                 level=level,
                 category=args.category,
                 title=args.title,
                 content=args.content,
                 force=args.force,
+                promotable=promotable,
             )
-            print(f"Added {level} lesson {lesson_id}: {args.title}")
+            promo_note = " (no-promote)" if not promotable else ""
+            print(f"Added {level} lesson {lesson_id}: {args.title}{promo_note}")
 
         elif args.command == "add-ai":
             level = "system" if args.system else "project"
+            promotable = not getattr(args, "no_promote", False)
             lesson_id = manager.add_ai_lesson(
                 level=level,
                 category=args.category,
                 title=args.title,
                 content=args.content,
+                promotable=promotable,
             )
-            print(f"Added AI {level} lesson {lesson_id}: {args.title}")
+            promo_note = " (no-promote)" if not promotable else ""
+            print(f"Added AI {level} lesson {lesson_id}: {args.title}{promo_note}")
 
         elif args.command == "add-system":
             # Alias for add --system (backward compatibility with bash script)

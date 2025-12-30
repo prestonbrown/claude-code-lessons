@@ -703,6 +703,87 @@ class TestPromotion:
         with pytest.raises(ValueError, match="[Pp]roject"):
             manager_with_lessons.promote_lesson("S001")
 
+    def test_add_non_promotable_lesson(self, manager: "LessonsManager"):
+        """Should be able to add a lesson that cannot be promoted."""
+        lesson_id = manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Project-specific pattern",
+            content="This should never be promoted to system level",
+            promotable=False,
+        )
+
+        lesson = manager.get_lesson(lesson_id)
+        assert lesson is not None
+        assert lesson.promotable is False
+
+    def test_non_promotable_lesson_never_promotion_ready(self, manager: "LessonsManager"):
+        """Non-promotable lessons should never trigger promotion_ready."""
+        lesson_id = manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Project-only",
+            content="Never promote",
+            promotable=False,
+        )
+
+        # Cite many times to exceed threshold
+        for _ in range(60):
+            result = manager.cite_lesson(lesson_id)
+
+        # Should have high uses but NOT be promotion_ready
+        lesson = manager.get_lesson(lesson_id)
+        assert lesson.uses >= 50
+        assert result.promotion_ready is False
+
+    def test_promotable_flag_persists(self, manager: "LessonsManager"):
+        """Promotable flag should survive write/read cycle."""
+        lesson_id = manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Non-promotable test",
+            content="Should persist",
+            promotable=False,
+        )
+
+        # Force re-read from file
+        lessons = manager.list_lessons(scope="project")
+        lesson = next((l for l in lessons if l.id == lesson_id), None)
+
+        assert lesson is not None
+        assert lesson.promotable is False
+
+    def test_promotable_defaults_to_true(self, manager: "LessonsManager"):
+        """Lessons without explicit promotable flag should default to True."""
+        lesson_id = manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Normal lesson",
+            content="Should be promotable by default",
+        )
+
+        lesson = manager.get_lesson(lesson_id)
+        assert lesson.promotable is True
+
+    def test_old_lesson_format_backward_compatible(self, manager: "LessonsManager"):
+        """Old lessons without Promotable field should parse as promotable=True."""
+        # Write a lesson in old format (no Promotable field)
+        old_format = """# LESSONS.md - Project Level
+
+## Active Lessons
+
+### [L001] [*----|-----] Old lesson
+- **Uses**: 5 | **Velocity**: 1.0 | **Learned**: 2025-01-01 | **Last**: 2025-12-29 | **Category**: pattern
+> This lesson was created before promotable flag existed
+"""
+        manager.project_lessons_file.write_text(old_format)
+
+        # Should parse successfully with promotable=True
+        lesson = manager.get_lesson("L001")
+        assert lesson is not None
+        assert lesson.promotable is True
+        assert lesson.uses == 5
+
 
 # =============================================================================
 # Listing and Search
@@ -960,6 +1041,155 @@ class TestTokenInjectDetails:
 
         assert isinstance(total, int)
         assert total > 50  # Should be substantial
+
+
+# =============================================================================
+# CLI Tests
+# =============================================================================
+
+
+class TestCLI:
+    """Tests for command-line interface."""
+
+    def test_cli_add_with_no_promote(self, temp_lessons_base: Path, temp_project_root: Path):
+        """CLI --no-promote flag should create non-promotable lesson."""
+        import subprocess
+
+        result = subprocess.run(
+            [
+                "python3", "core/lessons_manager.py",
+                "add", "--no-promote",
+                "pattern", "CLI Test", "This should not promote"
+            ],
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "LESSONS_BASE": str(temp_lessons_base),
+                "PROJECT_DIR": str(temp_project_root),
+            },
+        )
+
+        assert result.returncode == 0
+        assert "(no-promote)" in result.stdout
+
+        # Verify the lesson was created with promotable=False
+        from core.lessons_manager import LessonsManager
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        lesson = manager.get_lesson("L001")
+        assert lesson is not None
+        assert lesson.promotable is False
+
+    def test_cli_add_ai_with_no_promote(self, temp_lessons_base: Path, temp_project_root: Path):
+        """CLI add-ai --no-promote should create non-promotable AI lesson."""
+        import subprocess
+
+        result = subprocess.run(
+            [
+                "python3", "core/lessons_manager.py",
+                "add-ai", "--no-promote",
+                "pattern", "AI Test", "AI non-promotable lesson"
+            ],
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "LESSONS_BASE": str(temp_lessons_base),
+                "PROJECT_DIR": str(temp_project_root),
+            },
+        )
+
+        assert result.returncode == 0
+        assert "(no-promote)" in result.stdout
+
+        from core.lessons_manager import LessonsManager
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        lesson = manager.get_lesson("L001")
+        assert lesson is not None
+        assert lesson.promotable is False
+        assert lesson.source == "ai"
+
+
+# =============================================================================
+# Shell Hook Tests
+# =============================================================================
+
+
+class TestCaptureHook:
+    """Tests for capture-hook.sh parsing."""
+
+    def test_capture_hook_parses_no_promote(self, temp_lessons_base: Path, temp_project_root: Path):
+        """capture-hook.sh should parse LESSON (no-promote): syntax."""
+        import subprocess
+        import json
+
+        hook_path = Path("adapters/claude-code/capture-hook.sh")
+        if not hook_path.exists():
+            pytest.skip("capture-hook.sh not found")
+
+        input_data = json.dumps({
+            "prompt": "LESSON (no-promote): pattern: Hook Test - Testing hook parsing",
+            "cwd": str(temp_project_root),
+        })
+
+        result = subprocess.run(
+            ["bash", str(hook_path)],
+            input=input_data,
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "LESSONS_BASE": str(temp_lessons_base),
+                "PROJECT_DIR": str(temp_project_root),
+            },
+        )
+
+        assert result.returncode == 0
+        output = json.loads(result.stdout)
+        context = output["hookSpecificOutput"]["additionalContext"]
+        assert "(no-promote)" in context
+        assert "LESSON RECORDED" in context
+
+        # Verify lesson was created with promotable=False
+        from core.lessons_manager import LessonsManager
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        lesson = manager.get_lesson("L001")
+        assert lesson is not None
+        assert lesson.promotable is False
+
+    def test_capture_hook_normal_lesson_is_promotable(self, temp_lessons_base: Path, temp_project_root: Path):
+        """capture-hook.sh without (no-promote) should create promotable lesson."""
+        import subprocess
+        import json
+
+        hook_path = Path("adapters/claude-code/capture-hook.sh")
+        if not hook_path.exists():
+            pytest.skip("capture-hook.sh not found")
+
+        input_data = json.dumps({
+            "prompt": "LESSON: pattern: Normal Test - Normal lesson",
+            "cwd": str(temp_project_root),
+        })
+
+        result = subprocess.run(
+            ["bash", str(hook_path)],
+            input=input_data,
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "LESSONS_BASE": str(temp_lessons_base),
+                "PROJECT_DIR": str(temp_project_root),
+            },
+        )
+
+        assert result.returncode == 0
+
+        from core.lessons_manager import LessonsManager
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        lesson = manager.get_lesson("L001")
+        assert lesson is not None
+        assert lesson.promotable is True
 
 
 if __name__ == "__main__":
