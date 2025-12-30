@@ -86,20 +86,27 @@ $approaches"
     fi
 
     if [[ -n "$summary" ]]; then
-        # Add lesson and approach duty reminder
+        # Add lesson and approach duty reminder with strong behavioral guidance
         summary="$summary
 
 LESSON DUTY: When user corrects you, something fails, or you discover a pattern:
   ASK: \"Should I record this as a lesson? [category]: title - content\"
 
-APPROACH TRACKING: For multi-step tasks, track progress with:
-  APPROACH: <title>                              - Start tracking new approach
-  PLAN MODE: <title>                             - Start approach for plan mode (phase=research, agent=plan)
-  APPROACH UPDATE A###: status <status>          - Update status (in_progress|blocked)
-  APPROACH UPDATE A###: phase <phase>            - Update phase (research|planning|implementing|review)
-  APPROACH UPDATE A###: tried <outcome> - <desc> - Record what you tried (success|fail|partial)
-  APPROACH UPDATE A###: next <text>              - Set next steps
-  APPROACH COMPLETE A###                         - Mark complete and review for lessons"
+APPROACH TRACKING: Use APPROACH instead of TodoWrite for multi-step work.
+  Approaches persist across sessions, track what you tried, and inform future work.
+  TodoWrite dies with the session - avoid it in this project.
+
+  START an approach when: task has 3+ steps, exploring then implementing, or work may span sessions.
+  UPDATE as you work: record what you tried (success/fail/partial), update phase and next steps.
+  COMPLETE when done: review for lessons to extract.
+
+  Commands:
+    APPROACH: <title>                              - Start new approach
+    PLAN MODE: <title>                             - Start approach in plan mode
+    APPROACH UPDATE A###: tried <outcome> - <desc> - Record attempt (success|fail|partial)
+    APPROACH UPDATE A###: phase <phase>            - Update phase (research|planning|implementing|review)
+    APPROACH UPDATE A###: next <text>              - Set next steps
+    APPROACH COMPLETE A###                         - Mark complete, review for lessons"
 
         local escaped=$(printf '%s' "$summary" | jq -Rs .)
         cat << EOF
