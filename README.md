@@ -234,7 +234,6 @@ APPROACH COMPLETE A###                         # Mark complete
 ```bash
 LESSONS_BASE=~/.config/coding-agent-lessons  # System lessons location
 PROJECT_DIR=/path/to/project                  # Project root
-LESSON_REMIND_EVERY=12                        # Reminder frequency (prompts)
 LESSONS_DEBUG=0|1|2|3                         # Debug logging level (see below)
 ```
 
@@ -273,6 +272,10 @@ Log files rotate automatically at 50MB (keeps 3 files).
 In `~/.claude/settings.json`:
 ```json
 {
+  "lessonsSystem": {
+    "enabled": true,
+    "remindEvery": 12
+  },
   "hooks": {
     "SessionStart": [{"hooks": [{"type": "command", "command": "bash ~/.claude/hooks/inject-hook.sh"}]}],
     "UserPromptSubmit": [{"hooks": [
@@ -280,10 +283,12 @@ In `~/.claude/settings.json`:
       {"type": "command", "command": "bash ~/.claude/hooks/smart-inject-hook.sh", "timeout": 15000}
     ]}],
     "Stop": [{"hooks": [{"type": "command", "command": "bash ~/.claude/hooks/stop-hook.sh"}]}]
-  },
-  "lessonsSystem": {"enabled": true}
+  }
 }
 ```
+
+- `lessonsSystem.enabled`: Enable/disable the lessons system
+- `lessonsSystem.remindEvery`: Show high-priority lesson reminders every N prompts (default: 12)
 
 ## Agent Behavior
 

@@ -210,7 +210,7 @@ EOF
     # Update settings.json with hooks (including periodic reminder and PreCompact)
     local settings_file="$claude_dir/settings.json"
     local hooks_config='{
-  "lessonsSystem": {"enabled": true},
+  "lessonsSystem": {"enabled": true, "remindEvery": 12},
   "hooks": {
     "SessionStart": [{"hooks": [
       {"type": "command", "command": "bash '"$hooks_dir"'/inject-hook.sh", "timeout": 5000},
@@ -496,7 +496,7 @@ main() {
     echo "  - Use '/lessons' command to view all lessons"
     echo "  - Agent will cite [L###] when applying lessons"
     echo ""
-    echo "Configure reminder frequency: export LESSON_REMIND_EVERY=12"
+    echo "Configure reminder frequency in ~/.claude/settings.json: lessonsSystem.remindEvery"
     echo ""
 }
 

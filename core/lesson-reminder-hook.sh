@@ -8,7 +8,16 @@
 set -euo pipefail
 
 STATE_FILE="$HOME/.config/coding-agent-lessons/.reminder-state"
-REMIND_EVERY=${LESSON_REMIND_EVERY:-12}  # Show reminder every 12th prompt
+CONFIG_FILE="$HOME/.claude/settings.json"
+
+# Priority: env var > config file > default (12)
+if [[ -n "${LESSON_REMIND_EVERY:-}" ]]; then
+  REMIND_EVERY="$LESSON_REMIND_EVERY"
+elif [[ -f "$CONFIG_FILE" ]]; then
+  REMIND_EVERY=$(jq -r '.lessonsSystem.remindEvery // 12' "$CONFIG_FILE" 2>/dev/null || echo 12)
+else
+  REMIND_EVERY=12
+fi
 
 # Read current count
 COUNT=0
