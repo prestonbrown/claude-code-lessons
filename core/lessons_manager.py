@@ -1010,12 +1010,17 @@ No explanations, just ID: SCORE lines."""
 
         try:
             # Call Haiku via claude CLI
+            # Set LESSONS_SCORING_ACTIVE to prevent hooks from recursively
+            # calling score_relevance on the Haiku subagent
+            env = os.environ.copy()
+            env["LESSONS_SCORING_ACTIVE"] = "1"
             result = subprocess.run(
                 ["claude", "-p", "--model", "haiku"],
                 input=prompt,
                 capture_output=True,
                 text=True,
                 timeout=timeout_seconds,
+                env=env,
             )
 
             if result.returncode != 0:

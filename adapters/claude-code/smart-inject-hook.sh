@@ -7,6 +7,10 @@
 
 set -euo pipefail
 
+# Guard against recursive calls: skip if we're inside a score-relevance subagent
+# This prevents infinite loops when Haiku subagents trigger this hook
+[[ -n "${LESSONS_SCORING_ACTIVE:-}" ]] && exit 0
+
 LESSONS_BASE="${LESSONS_BASE:-$HOME/.config/coding-agent-lessons}"
 # Python manager - try installed location first, fall back to dev location
 if [[ -f "$LESSONS_BASE/lessons_manager.py" ]]; then
