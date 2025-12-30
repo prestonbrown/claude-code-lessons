@@ -8,14 +8,14 @@ The test suite uses **pytest** with Python's standard library. Tests are organiz
 
 ```
 tests/
-├── test_lessons_manager.py   # Core lessons functionality (62 tests)
+├── test_lessons_manager.py   # Core lessons + CLI (136 tests)
 └── test_approaches.py        # Approaches system (139 tests)
 ```
 
 ## Running Tests
 
 ```bash
-# Run all tests (201 tests)
+# Run all tests (275 tests)
 python3 -m pytest tests/ -v
 
 # Run with coverage
@@ -356,6 +356,99 @@ def test_inspect_state(temp_env):
 | AssertionError on ID | ID format changed | Update expected pattern |
 | Empty list returned | File not created/parsed | Check file path and content |
 | Subprocess test fails | Wrong Python path | Use `sys.executable` |
+
+## Test Fixtures Reference
+
+The test suite uses two fixture patterns. Use the correct one for your test:
+
+### `temp_lessons_base` + `temp_project_root` (Preferred for CLI tests)
+
+```python
+def test_cli_example(self, temp_lessons_base: Path, temp_project_root: Path):
+    """CLI tests use separate Path fixtures."""
+    result = subprocess.run(
+        ["python3", "core/lessons_manager.py", "list"],
+        env={
+            **os.environ,
+            "LESSONS_BASE": str(temp_lessons_base),
+            "PROJECT_DIR": str(temp_project_root),
+        },
+    )
+```
+
+- `temp_lessons_base`: System lessons location (`~/.config/coding-agent-lessons` equivalent)
+- `temp_project_root`: Project root containing `.coding-agent-lessons/`
+- Both are `Path` objects - convert with `str()` for subprocess env
+
+### `temp_env` (Dict-based, for internal tests)
+
+```python
+def test_internal_example(temp_env):
+    """Internal tests use the temp_env dict."""
+    manager = LessonsManager(
+        project_dir=temp_env["project_dir"],
+        lessons_base=temp_env["lessons_base"]
+    )
+```
+
+- Returns a dict with string paths
+- Keys: `project_dir`, `lessons_base`, `project_lessons`, `approaches_file`, `system_lessons`
+
+### `add_lesson` Method Signature
+
+The `add_lesson` method uses **keyword arguments**:
+
+```python
+# CORRECT - keyword arguments
+manager.add_lesson(
+    level="project",      # or "system"
+    category="pattern",   # pattern|correction|gotcha|preference|decision
+    title="My Title",
+    content="My content"
+)
+
+# WRONG - positional arguments
+manager.add_lesson("pattern", "Title", "Content")  # TypeError!
+```
+
+## File Paths and Locations
+
+### Development vs Installed Paths
+
+| Component | Development Path | Installed Path |
+|-----------|-----------------|----------------|
+| Python manager | `core/lessons_manager.py` | `~/.config/coding-agent-lessons/lessons_manager.py` |
+| Debug logger | `core/debug_logger.py` | `~/.config/coding-agent-lessons/debug_logger.py` |
+| Bash wrapper | `core/lessons-manager.sh` | `~/.config/coding-agent-lessons/lessons-manager.sh` |
+| Inject hook | `adapters/claude-code/inject-hook.sh` | `~/.claude/hooks/inject-hook.sh` |
+| Smart inject | `adapters/claude-code/smart-inject-hook.sh` | `~/.claude/hooks/smart-inject-hook.sh` |
+| Stop hook | `adapters/claude-code/stop-hook.sh` | `~/.claude/hooks/stop-hook.sh` |
+
+### Import Paths in lessons_manager.py
+
+The Python manager handles both dev and installed environments:
+
+```python
+# First try dev path (running from repo)
+from core.debug_logger import get_logger
+
+# Fall back to installed path (running from ~/.config)
+from debug_logger import get_logger
+```
+
+### CLI Test Environment
+
+When testing CLI commands via subprocess, always set both environment variables:
+
+```python
+env={
+    **os.environ,  # Preserve PATH, HOME, etc.
+    "LESSONS_BASE": str(temp_lessons_base),
+    "PROJECT_DIR": str(temp_project_root),
+}
+```
+
+**Common gotcha**: Forgetting `**os.environ` breaks Python imports because `PATH` is lost.
 
 ## Continuous Integration
 

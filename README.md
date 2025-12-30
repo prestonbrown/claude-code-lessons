@@ -298,7 +298,7 @@ When working with you, the agent will:
 ## Testing
 
 ```bash
-# Run all tests (269 tests)
+# Run all tests (275 tests)
 python3 -m pytest tests/ -v
 
 # Run specific test files
