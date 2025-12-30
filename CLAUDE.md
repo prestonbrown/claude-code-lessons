@@ -40,6 +40,15 @@ python3 core/lessons_manager.py cite L001
 python3 core/lessons_manager.py approach list
 ```
 
+## Writing Tests
+
+**Read `docs/TESTING.md` before writing tests.** Key gotchas:
+
+- Use `temp_lessons_base` + `temp_project_root` fixtures for CLI tests
+- `add_lesson()` requires **keyword args**: `level=`, `category=`, `title=`, `content=`
+- CLI subprocess tests need `env={**os.environ, "LESSONS_BASE": ..., "PROJECT_DIR": ...}`
+- Dev paths (`core/...`) differ from installed paths (`~/.config/coding-agent-lessons/...`)
+
 ## Environment
 
 | Variable | Purpose |
