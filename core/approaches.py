@@ -1104,12 +1104,13 @@ Consider extracting lessons about:
 
         # Build todo list from approach state
         todos = []
+        prefix = f"[{approach.id}] "  # Prefix to identify approach-tracked todos
 
         # Add completed tried entries (already done)
         for tried in approach.tried:
             if tried.outcome == "success":
                 todos.append({
-                    "content": tried.description,
+                    "content": prefix + tried.description,
                     "status": "completed",
                     "activeForm": tried.description[:50] + "..." if len(tried.description) > 50 else tried.description
                 })
@@ -1117,7 +1118,7 @@ Consider extracting lessons about:
         # Add checkpoint as in_progress
         if approach.checkpoint:
             todos.append({
-                "content": approach.checkpoint,
+                "content": prefix + approach.checkpoint,
                 "status": "in_progress",
                 "activeForm": approach.checkpoint[:50] + "..." if len(approach.checkpoint) > 50 else approach.checkpoint
             })
@@ -1128,7 +1129,7 @@ Consider extracting lessons about:
                 step = step.strip()
                 if step:
                     todos.append({
-                        "content": step,
+                        "content": prefix + step,
                         "status": "pending",
                         "activeForm": step[:50] + "..." if len(step) > 50 else step
                     })

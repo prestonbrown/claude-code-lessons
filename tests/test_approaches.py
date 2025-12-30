@@ -2311,7 +2311,7 @@ class TestApproachInjectTodos:
 
         # JSON should only have current task, not done task
         assert len(todos) == 1
-        assert todos[0]["content"] == "Current task"
+        assert "[A001] Current task" in todos[0]["content"]
         assert todos[0]["status"] == "in_progress"
 
 
@@ -2339,9 +2339,9 @@ class TestTodoSyncRoundTrip:
         json_str = result[json_start:json_end]
         todos_session2 = json.loads(json_str)
 
-        # Should have Step 2 (in_progress) and Step 3 (pending)
+        # Should have Step 2 (in_progress) and Step 3 (pending), with approach prefix
         assert len(todos_session2) == 2
-        contents = [t["content"] for t in todos_session2]
+        contents = " ".join(t["content"] for t in todos_session2)
         assert "Step 2" in contents
         assert "Step 3" in contents
 
