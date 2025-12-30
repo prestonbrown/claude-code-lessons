@@ -6,9 +6,13 @@ set -euo pipefail
 
 LESSONS_BASE="${LESSONS_BASE:-$HOME/.config/coding-agent-lessons}"
 BASH_MANAGER="$LESSONS_BASE/lessons-manager.sh"
-# Python manager - try multiple locations
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PYTHON_MANAGER="$SCRIPT_DIR/../../core/lessons_manager.py"
+# Python manager - try installed location first, fall back to dev location
+if [[ -f "$LESSONS_BASE/lessons_manager.py" ]]; then
+    PYTHON_MANAGER="$LESSONS_BASE/lessons_manager.py"
+else
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    PYTHON_MANAGER="$SCRIPT_DIR/../../core/lessons_manager.py"
+fi
 DECAY_INTERVAL=$((7 * 86400))  # 7 days in seconds
 
 # Check if enabled

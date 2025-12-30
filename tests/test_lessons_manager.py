@@ -1363,6 +1363,89 @@ class TestCaptureHook:
         assert lesson.promotable is True
 
 
+class TestHookPathResolution:
+    """Tests for hook Python manager path resolution."""
+
+    def test_hook_uses_installed_path_when_available(self, temp_lessons_base: Path, temp_project_root: Path):
+        """Hooks should use $LESSONS_BASE/lessons_manager.py when it exists (installed mode)."""
+        import shutil
+        from core.lessons_manager import LessonsManager
+
+        # Copy Python manager to LESSONS_BASE (simulating installed state)
+        src_manager = Path(__file__).parent.parent / "core" / "lessons_manager.py"
+        src_debug = Path(__file__).parent.parent / "core" / "debug_logger.py"
+        if not src_manager.exists():
+            pytest.skip("lessons_manager.py not found")
+
+        shutil.copy(src_manager, temp_lessons_base / "lessons_manager.py")
+        shutil.copy(src_debug, temp_lessons_base / "debug_logger.py")
+
+        # Create a lesson using the manager (ensures proper format)
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson(
+            level="system",
+            category="pattern",
+            title="Test Lesson",
+            content="Test content for hook path resolution."
+        )
+
+        # Run inject-hook from a different working directory to ensure
+        # the dev fallback path won't work
+        hook_path = Path(__file__).parent.parent / "adapters" / "claude-code" / "inject-hook.sh"
+        if not hook_path.exists():
+            pytest.skip("inject-hook.sh not found")
+
+        result = subprocess.run(
+            ["bash", str(hook_path)],
+            input=json.dumps({"cwd": str(temp_project_root)}),
+            capture_output=True,
+            text=True,
+            cwd="/tmp",  # Run from different directory
+            env={
+                **os.environ,
+                "LESSONS_BASE": str(temp_lessons_base),
+                "PROJECT_DIR": str(temp_project_root),
+            },
+        )
+
+        # Hook should succeed and output lesson context
+        assert result.returncode == 0
+        assert "LESSONS ACTIVE" in result.stdout or "S001" in result.stdout
+
+    def test_hook_falls_back_to_dev_path(self, temp_lessons_base: Path, temp_project_root: Path):
+        """Hooks should fall back to dev path when installed path doesn't exist."""
+        from core.lessons_manager import LessonsManager
+
+        # Don't copy Python manager - simulate dev environment
+        hook_path = Path(__file__).parent.parent / "adapters" / "claude-code" / "inject-hook.sh"
+        if not hook_path.exists():
+            pytest.skip("inject-hook.sh not found")
+
+        # Create a lesson using the manager (ensures proper format)
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson(
+            level="system",
+            category="pattern",
+            title="Test Lesson",
+            content="Test content for hook path resolution."
+        )
+
+        result = subprocess.run(
+            ["bash", str(hook_path)],
+            input=json.dumps({"cwd": str(temp_project_root)}),
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "LESSONS_BASE": str(temp_lessons_base),
+                "PROJECT_DIR": str(temp_project_root),
+            },
+        )
+
+        # Hook should succeed using dev path
+        assert result.returncode == 0
+
+
 class TestReminderHook:
     """Tests for lesson-reminder-hook.sh config and logging."""
 
