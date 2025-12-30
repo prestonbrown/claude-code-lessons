@@ -303,7 +303,7 @@ When working with you, the agent will:
 ## Testing
 
 ```bash
-# Run all tests (275 tests)
+# Run all tests (280 tests)
 python3 -m pytest tests/ -v
 
 # Run specific test files
