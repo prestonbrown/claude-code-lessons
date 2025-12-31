@@ -133,11 +133,6 @@ $approaches"
         fi
     fi
 
-    # Output to stderr if anything to report
-    if [[ -n "$feedback" ]]; then
-        echo "Injected: $feedback" >&2
-    fi
-
     if [[ -n "$summary" ]]; then
         # Add lesson duty reminder
         summary="$summary
@@ -156,6 +151,12 @@ $todo_continuation"
         fi
 
         local escaped=$(printf '%s' "$summary" | jq -Rs .)
+        # NOTE: $feedback contains user-visible summary like "4 system + 4 project lessons, 3 active approaches"
+        # Currently disabled - Claude Code doesn't surface systemMessage or stderr to users.
+        # When/if Claude Code adds hook feedback display, uncomment:
+        # cat << EOF
+        # {"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":$escaped,"systemMessage":"Injected: $feedback"}}
+        # EOF
         cat << EOF
 {"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":$escaped}}
 EOF
