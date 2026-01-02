@@ -26,6 +26,7 @@ try:
         # Dataclasses
         TriedStep,
         Handoff,
+        HandoffContext,
         HandoffCompleteResult,
         # Backward compatibility aliases
         TriedApproach,
@@ -48,6 +49,7 @@ except ImportError:
         # Dataclasses
         TriedStep,
         Handoff,
+        HandoffContext,
         HandoffCompleteResult,
         # Backward compatibility aliases
         TriedApproach,
@@ -302,6 +304,69 @@ class HandoffsMixin:
                         pass
                     idx += 1
 
+            # Parse HandoffContext (new format with structured context)
+            handoff_context = None
+            handoff_pattern = re.compile(r"^\s*-\s*\*\*Handoff\*\*\s*\(([^)]+)\):\s*$")
+            if idx < len(lines):
+                handoff_match = handoff_pattern.match(lines[idx])
+                if handoff_match:
+                    git_ref = handoff_match.group(1).strip()
+                    idx += 1
+                    # Parse sub-fields
+                    context_summary = ""
+                    context_refs = []
+                    context_changes = []
+                    context_learnings = []
+                    context_blockers = []
+
+                    while idx < len(lines):
+                        line = lines[idx].strip()
+                        if not line.startswith("- "):
+                            break
+                        # Check for sub-items (indented with "  - ")
+                        if line.startswith("- Summary:"):
+                            context_summary = line[len("- Summary:"):].strip()
+                        elif line.startswith("- Refs:"):
+                            refs_str = line[len("- Refs:"):].strip()
+                            if refs_str:
+                                context_refs = [r.strip() for r in refs_str.split("|") if r.strip()]
+                        elif line.startswith("- Changes:"):
+                            changes_str = line[len("- Changes:"):].strip()
+                            if changes_str:
+                                context_changes = [c.strip() for c in changes_str.split("|") if c.strip()]
+                        elif line.startswith("- Learnings:"):
+                            learnings_str = line[len("- Learnings:"):].strip()
+                            if learnings_str:
+                                context_learnings = [l.strip() for l in learnings_str.split("|") if l.strip()]
+                        elif line.startswith("- Blockers:"):
+                            blockers_str = line[len("- Blockers:"):].strip()
+                            if blockers_str:
+                                context_blockers = [b.strip() for b in blockers_str.split("|") if b.strip()]
+                        else:
+                            break
+                        idx += 1
+
+                    if context_summary or context_refs or context_changes or context_learnings or context_blockers:
+                        handoff_context = HandoffContext(
+                            summary=context_summary,
+                            critical_files=context_refs,
+                            recent_changes=context_changes,
+                            learnings=context_learnings,
+                            blockers=context_blockers,
+                            git_ref=git_ref,
+                        )
+
+            # Parse blocked_by field (optional)
+            blocked_by = []
+            blocked_by_pattern = re.compile(r"^\s*-\s*\*\*Blocked By\*\*:\s*(.*)$")
+            if idx < len(lines):
+                blocked_by_match = blocked_by_pattern.match(lines[idx])
+                if blocked_by_match:
+                    blocked_str = blocked_by_match.group(1).strip()
+                    if blocked_str:
+                        blocked_by = [b.strip() for b in blocked_str.split(",") if b.strip()]
+                    idx += 1
+
             # Parse tried section
             tried = []
             # Look for **Tried**: header
@@ -351,6 +416,8 @@ class HandoffsMixin:
                 agent=agent,
                 checkpoint=checkpoint,
                 last_session=last_session,
+                handoff=handoff_context,
+                blocked_by=blocked_by,
             ))
 
         return handoffs
@@ -370,12 +437,30 @@ class HandoffsMixin:
             f"- **Description**: {handoff.description}",
         ]
 
-        # Add checkpoint if present
+        # Add checkpoint if present (legacy format, kept for backward compatibility)
         if handoff.checkpoint:
             session_str = handoff.last_session.isoformat() if handoff.last_session else ""
             lines.append(f"- **Checkpoint**: {handoff.checkpoint}")
             if session_str:
                 lines.append(f"- **Last Session**: {session_str}")
+
+        # Add HandoffContext if present (new format)
+        if handoff.handoff is not None:
+            ctx = handoff.handoff
+            lines.append(f"- **Handoff** ({ctx.git_ref}):")
+            lines.append(f"  - Summary: {ctx.summary}")
+            if ctx.critical_files:
+                lines.append(f"  - Refs: {' | '.join(ctx.critical_files)}")
+            if ctx.recent_changes:
+                lines.append(f"  - Changes: {' | '.join(ctx.recent_changes)}")
+            if ctx.learnings:
+                lines.append(f"  - Learnings: {' | '.join(ctx.learnings)}")
+            if ctx.blockers:
+                lines.append(f"  - Blockers: {' | '.join(ctx.blockers)}")
+
+        # Add blocked_by if present
+        if handoff.blocked_by:
+            lines.append(f"- **Blocked By**: {', '.join(handoff.blocked_by)}")
 
         lines.append("")
 
@@ -968,6 +1053,71 @@ class HandoffsMixin:
         """Backward compatibility alias for handoff_update_checkpoint."""
         return self.handoff_update_checkpoint(approach_id, checkpoint)
 
+    def handoff_update_context(self, handoff_id: str, context: HandoffContext) -> None:
+        """
+        Update a handoff's context (rich structured context for session handoffs).
+
+        Args:
+            handoff_id: The handoff ID
+            context: HandoffContext with summary, critical_files, etc.
+
+        Raises:
+            ValueError: If handoff not found
+        """
+        with FileLock(self.project_handoffs_file):
+            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+
+            found = False
+            for handoff in handoffs:
+                if handoff.id == handoff_id:
+                    handoff.handoff = context
+                    handoff.last_session = date.today()
+                    handoff.updated = date.today()
+                    found = True
+                    break
+
+            if not found:
+                raise ValueError(f"Handoff {handoff_id} not found")
+
+            self._write_handoffs_file(handoffs)
+
+    # Backward compatibility alias
+    def approach_update_context(self, approach_id: str, context: HandoffContext) -> None:
+        """Backward compatibility alias for handoff_update_context."""
+        return self.handoff_update_context(approach_id, context)
+
+    def handoff_update_blocked_by(self, handoff_id: str, blocked_by: List[str]) -> None:
+        """
+        Update a handoff's blocked_by dependency list.
+
+        Args:
+            handoff_id: The handoff ID
+            blocked_by: List of handoff IDs that this handoff is blocked by
+
+        Raises:
+            ValueError: If handoff not found
+        """
+        with FileLock(self.project_handoffs_file):
+            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+
+            found = False
+            for handoff in handoffs:
+                if handoff.id == handoff_id:
+                    handoff.blocked_by = blocked_by
+                    handoff.updated = date.today()
+                    found = True
+                    break
+
+            if not found:
+                raise ValueError(f"Handoff {handoff_id} not found")
+
+            self._write_handoffs_file(handoffs)
+
+    # Backward compatibility alias
+    def approach_update_blocked_by(self, approach_id: str, blocked_by: List[str]) -> None:
+        """Backward compatibility alias for handoff_update_blocked_by."""
+        return self.handoff_update_blocked_by(approach_id, blocked_by)
+
     def handoff_complete(self, handoff_id: str) -> HandoffCompleteResult:
         """
         Mark a handoff as completed and return extraction prompt.
@@ -1429,9 +1579,26 @@ Consider extracting lessons about:
                     summary_lines = self._summarize_tried_steps(handoff.tried)
                     lines.extend(summary_lines)
 
-                # Show checkpoint prominently if present (key for session handoff)
+                # Show checkpoint prominently if present (legacy, key for session handoff)
                 if handoff.checkpoint:
                     lines.append(f"- **Checkpoint**: {handoff.checkpoint}")
+
+                # Show HandoffContext if present (new structured format)
+                if handoff.handoff is not None:
+                    ctx = handoff.handoff
+                    lines.append(f"- **Handoff** ({ctx.git_ref}):")
+                    lines.append(f"  - Summary: {ctx.summary}")
+                    if ctx.critical_files:
+                        refs_str = ", ".join(ctx.critical_files[:3])
+                        if len(ctx.critical_files) > 3:
+                            refs_str += f" (+{len(ctx.critical_files) - 3} more)"
+                        lines.append(f"  - Refs: {refs_str}")
+                    if ctx.blockers:
+                        lines.append(f"  - Blockers: {', '.join(ctx.blockers)}")
+
+                # Show blocked_by if present
+                if handoff.blocked_by:
+                    lines.append(f"- **Blocked By**: {', '.join(handoff.blocked_by)}")
 
                 # Appears done warning
                 if appears_done:

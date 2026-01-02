@@ -55,6 +55,7 @@ from core.models import (
     # New class names
     TriedStep,
     Handoff,
+    HandoffContext,
     HandoffCompleteResult,
     # Backward compat aliases
     TriedApproach,
@@ -105,6 +106,7 @@ __all__ = [
     "DecayResult",
     "TriedStep",
     "Handoff",
+    "HandoffContext",
     "HandoffCompleteResult",
     # Dataclasses (backward compat)
     "TriedApproach",

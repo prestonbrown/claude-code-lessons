@@ -278,8 +278,10 @@ class Handoff:
     agent: str = "user"  # explore|general-purpose|plan|review|user
     files: List[str] = field(default_factory=list)
     tried: List[TriedStep] = field(default_factory=list)
-    checkpoint: str = ""  # Progress summary from PreCompact hook
+    checkpoint: str = ""  # Progress summary from PreCompact hook (legacy, use handoff instead)
     last_session: Optional[date] = None  # When checkpoint was last updated
+    handoff: Optional["HandoffContext"] = None  # Rich context for session handoffs
+    blocked_by: List[str] = field(default_factory=list)  # IDs of blocking handoffs
 
 
 # Backward compatibility alias
@@ -301,6 +303,17 @@ class HandoffCompleteResult:
 
 # Backward compatibility alias
 ApproachCompleteResult = HandoffCompleteResult
+
+
+@dataclass
+class HandoffContext:
+    """Rich context for session handoffs."""
+    summary: str                    # 1-2 sentence progress summary
+    critical_files: List[str]       # 2-3 most important file:line refs
+    recent_changes: List[str]       # What was modified this session
+    learnings: List[str]            # Discoveries/patterns found
+    blockers: List[str]             # What's blocking progress
+    git_ref: str                    # Commit hash at handoff time
 
 
 @dataclass
