@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 """
-Test suite for Approaches tracking system.
+Test suite for Handoffs tracking system (formerly called "approaches").
 
 This is a TDD test file - tests are written BEFORE the implementation.
-Run with: pytest tests/test_approaches.py -v
+Run with: pytest tests/test_handoffs.py -v
 
-The approaches system tracks ongoing work with tried approaches and next steps.
-Storage location: <project_root>/.coding-agent-lessons/APPROACHES.md
+The handoffs system tracks ongoing work with tried steps and next steps.
+Storage location: <project_root>/.recall/HANDOFFS.md (or legacy .coding-agent-lessons/APPROACHES.md)
 
 File format:
     # APPROACHES.md - Active Work Tracking
@@ -114,10 +114,11 @@ class TestApproachAdd:
     """Tests for adding approaches."""
 
     def test_approach_add_creates_file(self, manager: "LessonsManager"):
-        """Adding an approach should create the APPROACHES.md file."""
+        """Adding an approach should create the handoffs file (HANDOFFS.md or legacy APPROACHES.md)."""
         manager.approach_add(title="Test approach")
 
-        approaches_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES.md"
+        # Use the manager's property to get the actual file path
+        approaches_file = manager.project_handoffs_file
         assert approaches_file.exists()
         content = approaches_file.read_text()
         assert "Test approach" in content
@@ -430,11 +431,7 @@ class TestApproachArchive:
         assert approach is None
 
         # Should be in archive file
-        archive_file = (
-            manager_with_approaches.project_root
-            / ".coding-agent-lessons"
-            / "APPROACHES_ARCHIVE.md"
-        )
+        archive_file = manager_with_approaches.project_handoffs_archive
         assert archive_file.exists()
         content = archive_file.read_text()
         assert "A001" in content
@@ -444,13 +441,15 @@ class TestApproachArchive:
         """Archiving should create archive file if it doesn't exist."""
         manager.approach_add(title="To be archived")
 
-        archive_file = (
-            manager.project_root / ".coding-agent-lessons" / "APPROACHES_ARCHIVE.md"
-        )
+        # Archive file should not exist yet (we check after creating approach since
+        # the property path depends on which data dir exists)
+        archive_file = manager.project_handoffs_archive
         assert not archive_file.exists()
 
         manager.approach_archive("A001")
 
+        # Re-get the path (it might have been created by the archive operation)
+        archive_file = manager.project_handoffs_archive
         assert archive_file.exists()
 
     def test_approach_archive_preserves_data(self, manager_with_approaches: "LessonsManager"):
@@ -467,11 +466,7 @@ class TestApproachArchive:
         manager_with_approaches.approach_archive("A001")
 
         # Read archive file and verify data is present
-        archive_file = (
-            manager_with_approaches.project_root
-            / ".coding-agent-lessons"
-            / "APPROACHES_ARCHIVE.md"
-        )
+        archive_file = manager_with_approaches.project_handoffs_archive
         content = archive_file.read_text()
 
         assert approach_before.title in content
@@ -487,11 +482,7 @@ class TestApproachArchive:
         manager_with_approaches.approach_archive("A001")
         manager_with_approaches.approach_archive("A002")
 
-        archive_file = (
-            manager_with_approaches.project_root
-            / ".coding-agent-lessons"
-            / "APPROACHES_ARCHIVE.md"
-        )
+        archive_file = manager_with_approaches.project_handoffs_archive
         content = archive_file.read_text()
 
         assert "A001" in content
@@ -526,11 +517,7 @@ class TestApproachDelete:
         """Deleting should not move to archive (unlike archive)."""
         manager_with_approaches.approach_delete("A001")
 
-        archive_file = (
-            manager_with_approaches.project_root
-            / ".coding-agent-lessons"
-            / "APPROACHES_ARCHIVE.md"
-        )
+        archive_file = manager_with_approaches.project_handoffs_archive
         # Archive file should not exist or not contain the deleted approach
         if archive_file.exists():
             content = archive_file.read_text()
@@ -644,7 +631,7 @@ class TestApproachInject:
         injected = manager_with_approaches.approach_inject()
 
         # Split by sections to verify placement
-        assert "## Active Approaches" in injected
+        assert "## Active Handoffs" in injected
         assert "## Recent Completions" in injected
 
         active_section = injected.split("## Recent Completions")[0]
@@ -747,7 +734,7 @@ class TestApproachEdgeCases:
 
     def test_approach_empty_file(self, manager: "LessonsManager"):
         """Should handle empty approaches file gracefully."""
-        approaches_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES.md"
+        approaches_file = manager.project_handoffs_file
         approaches_file.parent.mkdir(parents=True, exist_ok=True)
         approaches_file.write_text("")
 
@@ -756,7 +743,7 @@ class TestApproachEdgeCases:
 
     def test_approach_malformed_entry_skipped(self, manager: "LessonsManager"):
         """Should skip malformed entries without crashing."""
-        approaches_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES.md"
+        approaches_file = manager.project_handoffs_file
         approaches_file.parent.mkdir(parents=True, exist_ok=True)
 
         malformed = """# APPROACHES.md - Active Work Tracking
@@ -871,18 +858,19 @@ class TestApproachFileFormat:
         """Approaches file should have proper header."""
         manager.approach_add(title="Test")
 
-        approaches_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES.md"
+        approaches_file = manager.project_handoffs_file
         content = approaches_file.read_text()
 
-        assert "APPROACHES.md" in content
-        assert "Active Work Tracking" in content or "Active Approaches" in content
+        # Accept both new format (HANDOFFS.md) and legacy (APPROACHES.md)
+        assert "HANDOFFS.md" in content or "APPROACHES.md" in content
+        assert "Active Work Tracking" in content or "Active Handoffs" in content
 
     def test_approach_format_includes_separator(self, manager: "LessonsManager"):
         """Each approach should be followed by separator."""
         manager.approach_add(title="First")
         manager.approach_add(title="Second")
 
-        approaches_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES.md"
+        approaches_file = manager.project_handoffs_file
         content = approaches_file.read_text()
 
         # Should have separator between approaches
@@ -893,7 +881,7 @@ class TestApproachFileFormat:
         manager.approach_add(title="Test")
         manager.approach_update_status("A001", "in_progress")
 
-        approaches_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES.md"
+        approaches_file = manager.project_handoffs_file
         content = approaches_file.read_text()
 
         assert "**Status**:" in content
@@ -906,7 +894,7 @@ class TestApproachFileFormat:
         manager.approach_add(title="Test")
         manager.approach_add_tried("A001", "fail", "First attempt")
 
-        approaches_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES.md"
+        approaches_file = manager.project_handoffs_file
         content = approaches_file.read_text()
 
         assert "**Tried**:" in content
@@ -918,7 +906,7 @@ class TestApproachFileFormat:
         manager.approach_add(title="Test")
         manager.approach_update_next("A001", "Do something next")
 
-        approaches_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES.md"
+        approaches_file = manager.project_handoffs_file
         content = approaches_file.read_text()
 
         assert "**Next**:" in content
@@ -1103,7 +1091,7 @@ class TestApproachPhaseAgentFormat:
         """Approach format should include phase in status line."""
         manager.approach_add(title="Test", phase="implementing")
 
-        approaches_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES.md"
+        approaches_file = manager.project_handoffs_file
         content = approaches_file.read_text()
 
         assert "**Phase**:" in content
@@ -1113,7 +1101,7 @@ class TestApproachPhaseAgentFormat:
         """Approach format should include agent in status line."""
         manager.approach_add(title="Test", agent="explore")
 
-        approaches_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES.md"
+        approaches_file = manager.project_handoffs_file
         content = approaches_file.read_text()
 
         assert "**Agent**:" in content
@@ -1122,7 +1110,7 @@ class TestApproachPhaseAgentFormat:
     def test_approach_parse_new_format_with_phase_agent(self, manager: "LessonsManager"):
         """Should parse the new format with phase and agent correctly."""
         # Write a file with the new format directly
-        approaches_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES.md"
+        approaches_file = manager.project_handoffs_file
         approaches_file.parent.mkdir(parents=True, exist_ok=True)
 
         new_format_content = """# APPROACHES.md - Active Work Tracking
@@ -1159,7 +1147,7 @@ class TestApproachPhaseAgentFormat:
         manager.approach_add(title="Test format", phase="planning", agent="plan")
         manager.approach_update_status("A001", "in_progress")
 
-        approaches_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES.md"
+        approaches_file = manager.project_handoffs_file
         content = approaches_file.read_text()
 
         # The format should be:
@@ -1234,7 +1222,7 @@ class TestApproachPhaseAgentEdgeCases:
     def test_approach_backward_compatibility_no_phase_agent(self, manager: "LessonsManager"):
         """Should handle old format files without phase/agent fields."""
         # Write a file with the old format (no phase/agent)
-        approaches_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES.md"
+        approaches_file = manager.project_handoffs_file
         approaches_file.parent.mkdir(parents=True, exist_ok=True)
 
         old_format_content = """# APPROACHES.md - Active Work Tracking
@@ -1290,11 +1278,7 @@ class TestApproachPhaseAgentEdgeCases:
 
         manager_with_approaches.approach_archive("A001")
 
-        archive_file = (
-            manager_with_approaches.project_root
-            / ".coding-agent-lessons"
-            / "APPROACHES_ARCHIVE.md"
-        )
+        archive_file = manager_with_approaches.project_handoffs_archive
         content = archive_file.read_text()
 
         assert "**Phase**: review" in content or "**Phase**:" in content
@@ -1343,7 +1327,7 @@ class TestApproachDecayVisibility:
             manager.approach_update_status(f"A00{i+1}", "completed")
 
         # Make them all old (30 days ago) so only max_count applies
-        approaches_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES.md"
+        approaches_file = manager.project_handoffs_file
         content = approaches_file.read_text()
         old_date = (date.today() - timedelta(days=30)).isoformat()
         content = content.replace(
@@ -1426,7 +1410,7 @@ class TestApproachInjectWithCompleted:
             manager.approach_update_status(f"A00{i+1}", "completed")
 
         # Make them all old (30 days ago)
-        approaches_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES.md"
+        approaches_file = manager.project_handoffs_file
         content = approaches_file.read_text()
         old_date = (date.today() - timedelta(days=30)).isoformat()
         content = content.replace(
@@ -1475,7 +1459,7 @@ class TestApproachAutoArchive:
         assert len(approaches) == 0
 
         # Should be in archive
-        archive_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES_ARCHIVE.md"
+        archive_file = manager.project_handoffs_archive
         assert archive_file.exists()
         assert "Feature work" in archive_file.read_text()
 
@@ -2393,9 +2377,9 @@ class TestStaleApproachArchival:
 
         result = manager.approach_inject()
 
-        # Should still appear in active approaches
+        # Should still appear in active handoffs
         assert "Week old task" in result
-        assert "Active Approaches" in result
+        assert "Active Handoffs" in result
 
     def test_completed_approach_not_stale_archived(self, manager: LessonsManager) -> None:
         """Completed approaches are handled by different rules, not stale archival."""

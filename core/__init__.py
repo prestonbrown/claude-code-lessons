@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 """
-Coding Agent Lessons - Core module.
+Coding Agent Lessons (Recall) - Core module.
 
 A learning system for AI coding agents that captures lessons across sessions
-and tracks multi-step work via approaches.
+and tracks multi-step work via handoffs (formerly called "approaches").
 
 Usage:
     from core import LessonsManager, Lesson, LessonRating
@@ -17,7 +17,7 @@ Usage:
 # Main class
 from core.manager import LessonsManager
 
-# Data models - Constants
+# Data models - Constants (new names + backward compat aliases)
 from core.models import (
     ROBOT_EMOJI,
     SYSTEM_PROMOTION_THRESHOLD,
@@ -25,9 +25,16 @@ from core.models import (
     MAX_USES,
     VELOCITY_DECAY_FACTOR,
     VELOCITY_EPSILON,
+    # New constant names
+    HANDOFF_MAX_COMPLETED,
+    HANDOFF_MAX_AGE_DAYS,
+    HANDOFF_STALE_DAYS,
+    HANDOFF_COMPLETED_ARCHIVE_DAYS,
+    # Backward compat aliases
     APPROACH_MAX_COMPLETED,
     APPROACH_MAX_AGE_DAYS,
     APPROACH_STALE_DAYS,
+    APPROACH_COMPLETED_ARCHIVE_DAYS,
     SCORE_RELEVANCE_TIMEOUT,
     SCORE_RELEVANCE_MAX_QUERY_LEN,
 )
@@ -38,13 +45,18 @@ from core.models import (
     LessonCategory,
 )
 
-# Data models - Dataclasses
+# Data models - Dataclasses (new names + backward compat aliases)
 from core.models import (
     Lesson,
     LessonRating,
     CitationResult,
     InjectionResult,
     DecayResult,
+    # New class names
+    TriedStep,
+    Handoff,
+    HandoffCompleteResult,
+    # Backward compat aliases
     TriedApproach,
     Approach,
     ApproachCompleteResult,
@@ -64,27 +76,37 @@ from core.cli import main
 __all__ = [
     # Main class
     "LessonsManager",
-    # Constants
+    # Constants (new names)
     "ROBOT_EMOJI",
     "SYSTEM_PROMOTION_THRESHOLD",
     "STALE_DAYS_DEFAULT",
     "MAX_USES",
     "VELOCITY_DECAY_FACTOR",
     "VELOCITY_EPSILON",
+    "HANDOFF_MAX_COMPLETED",
+    "HANDOFF_MAX_AGE_DAYS",
+    "HANDOFF_STALE_DAYS",
+    "HANDOFF_COMPLETED_ARCHIVE_DAYS",
+    # Constants (backward compat)
     "APPROACH_MAX_COMPLETED",
     "APPROACH_MAX_AGE_DAYS",
     "APPROACH_STALE_DAYS",
+    "APPROACH_COMPLETED_ARCHIVE_DAYS",
     "SCORE_RELEVANCE_TIMEOUT",
     "SCORE_RELEVANCE_MAX_QUERY_LEN",
     # Enums
     "LessonLevel",
     "LessonCategory",
-    # Dataclasses
+    # Dataclasses (new names)
     "Lesson",
     "LessonRating",
     "CitationResult",
     "InjectionResult",
     "DecayResult",
+    "TriedStep",
+    "Handoff",
+    "HandoffCompleteResult",
+    # Dataclasses (backward compat)
     "TriedApproach",
     "Approach",
     "ApproachCompleteResult",

@@ -146,7 +146,7 @@ install_core() {
     cp "$SCRIPT_DIR/core/parsing.py" "$LESSONS_BASE/"
     cp "$SCRIPT_DIR/core/file_lock.py" "$LESSONS_BASE/"
     cp "$SCRIPT_DIR/core/lessons.py" "$LESSONS_BASE/"
-    cp "$SCRIPT_DIR/core/approaches.py" "$LESSONS_BASE/"
+    cp "$SCRIPT_DIR/core/handoffs.py" "$LESSONS_BASE/"
     cp "$SCRIPT_DIR/core/debug_logger.py" "$LESSONS_BASE/"
     cp "$SCRIPT_DIR/core/__init__.py" "$LESSONS_BASE/"
     cp "$SCRIPT_DIR/core/lesson-reminder-hook.sh" "$LESSONS_BASE/"
@@ -413,7 +413,7 @@ uninstall() {
     rm -f "$LESSONS_BASE/parsing.py"
     rm -f "$LESSONS_BASE/file_lock.py"
     rm -f "$LESSONS_BASE/lessons.py"
-    rm -f "$LESSONS_BASE/approaches.py"
+    rm -f "$LESSONS_BASE/handoffs.py"
     rm -f "$LESSONS_BASE/debug_logger.py"
     rm -f "$LESSONS_BASE/__init__.py"
     # Remove old monolithic file if it exists

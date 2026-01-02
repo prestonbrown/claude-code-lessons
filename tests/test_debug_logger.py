@@ -228,13 +228,13 @@ class TestJsonLinesOutput:
         assert entry["promotion_ready"] is False
 
     def test_approach_events(self, monkeypatch, temp_lessons_base):
-        """Should log approach lifecycle events."""
+        """Should log handoff lifecycle events (backward compat: approach_* aliases)."""
         monkeypatch.setenv("LESSONS_BASE", str(temp_lessons_base))
         monkeypatch.setenv("LESSONS_DEBUG", "1")
 
         logger = DebugLogger()
 
-        # Created event
+        # Created event (using backward compat alias)
         logger.approach_created(
             approach_id="A001",
             title="Test approach",
@@ -242,7 +242,7 @@ class TestJsonLinesOutput:
             agent="user",
         )
 
-        # Change event
+        # Change event (using backward compat alias)
         logger.approach_change(
             approach_id="A001",
             action="phase_change",
@@ -250,7 +250,7 @@ class TestJsonLinesOutput:
             new_value="implementing",
         )
 
-        # Completed event
+        # Completed event (using backward compat alias)
         logger.approach_completed(
             approach_id="A001",
             tried_count=3,
@@ -262,15 +262,16 @@ class TestJsonLinesOutput:
         assert len(lines) == 3
 
         created = json.loads(lines[0])
-        assert created["event"] == "approach_created"
-        assert created["approach_id"] == "A001"
+        # New event name is handoff_created (approach_created is backward compat alias)
+        assert created["event"] == "handoff_created"
+        assert created["handoff_id"] == "A001"
 
         changed = json.loads(lines[1])
-        assert changed["event"] == "approach_change"
+        assert changed["event"] == "handoff_change"
         assert changed["action"] == "phase_change"
 
         completed = json.loads(lines[2])
-        assert completed["event"] == "approach_completed"
+        assert completed["event"] == "handoff_completed"
         assert completed["tried_count"] == 3
 
 

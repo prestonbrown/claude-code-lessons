@@ -9,7 +9,7 @@ The test suite uses **pytest** with Python's standard library. Tests are organiz
 ```
 tests/
 ├── test_lessons_manager.py   # Core lessons + CLI (136 tests)
-└── test_approaches.py        # Approaches system (139 tests)
+└── test_handoffs.py          # Handoffs system (139 tests)
 ```
 
 ## Running Tests
@@ -23,13 +23,13 @@ python3 -m pytest tests/ --cov=core --cov-report=term-missing
 
 # Run specific test file
 python3 -m pytest tests/test_lessons_manager.py -v
-python3 -m pytest tests/test_approaches.py -v
+python3 -m pytest tests/test_handoffs.py -v
 
 # Run specific test class
-python3 -m pytest tests/test_approaches.py::TestPhaseDetectionFromTools -v
+python3 -m pytest tests/test_handoffs.py::TestPhaseDetectionFromTools -v
 
 # Run specific test
-python3 -m pytest tests/test_approaches.py::TestPhaseDetectionFromTools::test_bash_pytest_is_review -v
+python3 -m pytest tests/test_handoffs.py::TestPhaseDetectionFromTools::test_bash_pytest_is_review -v
 
 # Run tests matching a pattern
 python3 -m pytest tests/ -v -k "phase"
@@ -49,7 +49,7 @@ python3 -m pytest tests/ -v -k "phase"
 | Rating | 10 | Dual-dimension [uses\|velocity] format |
 | Tokens | 8 | Token estimation and heavy warnings |
 
-### Approaches Tests (test_approaches.py)
+### Handoffs Tests (test_handoffs.py)
 
 | Category | Tests | Description |
 |----------|-------|-------------|
@@ -486,7 +486,7 @@ open htmlcov/index.html
 ## Adding New Tests
 
 1. **Identify the component**: lessons, approaches, hooks, CLI
-2. **Choose the test file**: `test_lessons_manager.py` or `test_approaches.py`
+2. **Choose the test file**: `test_lessons_manager.py` or `test_handoffs.py`
 3. **Find related tests**: Group with similar functionality
 4. **Write the test**: Follow AAA pattern (Arrange, Act, Assert)
 5. **Run the test**: Verify it passes

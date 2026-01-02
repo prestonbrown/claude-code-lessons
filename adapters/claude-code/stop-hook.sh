@@ -8,7 +8,9 @@
 
 set -uo pipefail
 
-LESSONS_BASE="${LESSONS_BASE:-$HOME/.config/coding-agent-lessons}"
+# Support both new (RECALL_*) and old (LESSONS_*) env vars for backward compatibility
+LESSONS_BASE="${RECALL_BASE:-${LESSONS_BASE:-$HOME/.config/coding-agent-lessons}}"
+LESSONS_DEBUG="${RECALL_DEBUG:-${LESSONS_DEBUG:-}}"
 BASH_MANAGER="$LESSONS_BASE/lessons-manager.sh"
 # Python manager - try installed location first, fall back to dev location
 if [[ -f "$LESSONS_BASE/cli.py" ]]; then
@@ -378,7 +380,7 @@ process_approaches() {
 }
 
 # Capture TodoWrite tool calls and sync to approaches
-# This bridges ephemeral TodoWrite with persistent APPROACHES.md
+# This bridges ephemeral TodoWrite with persistent HANDOFFS.md
 # - completed todos -> tried entries (success)
 # - in_progress todo -> checkpoint
 # - pending todos -> next_steps

@@ -1,6 +1,6 @@
-# Coding Agent Lessons
+# Coding Agent Lessons (Recall)
 
-A dynamic learning and work tracking system for AI coding agents. Tracks patterns, corrections, and gotchas across sessions while helping manage ongoing work with approaches tracking.
+A dynamic learning and work tracking system for AI coding agents. Tracks patterns, corrections, and gotchas across sessions while helping manage ongoing work with handoffs tracking.
 
 Works with **Claude Code**, **OpenCode**, and other AI coding tools.
 
@@ -15,11 +15,11 @@ Works with **Claude Code**, **OpenCode**, and other AI coding tools.
 - **AI-generated lessons**: Agent can propose lessons (marked with robot emoji)
 - **Token tracking**: Warns when context injection is heavy (>2000 tokens)
 
-### Approaches System
-- **TodoWrite sync**: Use TodoWrite naturally - todos auto-sync to APPROACHES.md for persistence
-- **Work tracking**: Track ongoing tasks with tried approaches and next steps
+### Handoffs System (formerly "Approaches")
+- **TodoWrite sync**: Use TodoWrite naturally - todos auto-sync to HANDOFFS.md for persistence
+- **Work tracking**: Track ongoing tasks with tried steps and next steps
 - **Phases**: `research` → `planning` → `implementing` → `review`
-- **Session continuity**: Approaches restore as TodoWrite suggestions on next session
+- **Session continuity**: Handoffs restore as TodoWrite suggestions on next session
 - **Completion workflow**: Extract lessons when finishing work
 
 ## Quick Install
@@ -51,22 +51,22 @@ Format: `LESSON: [category:] title - content`
 
 **Categories:** `pattern`, `correction`, `decision`, `gotcha`, `preference`
 
-### Tracking Approaches
+### Tracking Handoffs
 
-For multi-step work, **just use TodoWrite** - it auto-syncs to APPROACHES.md:
+For multi-step work, **just use TodoWrite** - it auto-syncs to HANDOFFS.md:
 
 ```
 [Agent uses TodoWrite naturally]
-→ stop-hook captures todos to APPROACHES.md
+→ stop-hook captures todos to HANDOFFS.md
 → Next session: inject-hook restores as continuation prompt
 ```
 
-Your todos map to approach fields:
+Your todos map to handoff fields:
 - `completed` todos → `tried` entries (success)
 - `in_progress` todo → checkpoint (current focus)
 - `pending` todos → next steps
 
-**Manual approach commands** (for explicit control):
+**Manual handoff commands** (for explicit control):
 
 ```
 APPROACH: Implement WebSocket reconnection
@@ -77,13 +77,13 @@ APPROACH COMPLETE A001
 
 ### Plan Mode Integration
 
-When entering plan mode, create a tracked approach:
+When entering plan mode, create a tracked handoff:
 
 ```
 PLAN MODE: Implement user authentication
 ```
 
-This creates an approach with `phase=research` and `agent=plan`.
+This creates a handoff with `phase=research` and `agent=plan`.
 
 ### Viewing & Managing
 
@@ -175,7 +175,7 @@ coding-agent-lessons/
 │       └── ...
 └── tests/
     ├── test_lessons_manager.py # Lesson tests
-    ├── test_approaches.py      # Approach tests
+    ├── test_handoffs.py        # Handoff tests
     └── test_debug_logger.py    # Debug logger tests
 ```
 
@@ -325,7 +325,7 @@ python3 -m pytest tests/ -v
 
 # Run specific test files
 python3 -m pytest tests/test_lessons_manager.py -v  # Lesson tests
-python3 -m pytest tests/test_approaches.py -v       # Approach tests
+python3 -m pytest tests/test_handoffs.py -v         # Handoff tests
 python3 -m pytest tests/test_debug_logger.py -v     # Debug logger tests
 ```
 

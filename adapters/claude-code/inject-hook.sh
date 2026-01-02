@@ -4,7 +4,9 @@
 
 set -euo pipefail
 
-LESSONS_BASE="${LESSONS_BASE:-$HOME/.config/coding-agent-lessons}"
+# Support both new (RECALL_*) and old (LESSONS_*) env vars for backward compatibility
+LESSONS_BASE="${RECALL_BASE:-${LESSONS_BASE:-$HOME/.config/coding-agent-lessons}}"
+LESSONS_DEBUG="${RECALL_DEBUG:-${LESSONS_DEBUG:-}}"
 BASH_MANAGER="$LESSONS_BASE/lessons-manager.sh"
 # Python manager - try installed location first, fall back to dev location
 if [[ -f "$LESSONS_BASE/cli.py" ]]; then
@@ -140,8 +142,8 @@ $approaches"
 LESSON DUTY: When user corrects you, something fails, or you discover a pattern:
   ASK: \"Should I record this as a lesson? [category]: title - content\"
 
-WORK TRACKING: Use TodoWrite for multi-step work - it auto-syncs to persistent approaches.
-  Your todos are automatically saved to APPROACHES.md and restored next session."
+WORK TRACKING: Use TodoWrite for multi-step work - it auto-syncs to persistent handoffs.
+  Your todos are automatically saved to HANDOFFS.md and restored next session."
 
         # Add todo continuation if available
         if [[ -n "$todo_continuation" ]]; then

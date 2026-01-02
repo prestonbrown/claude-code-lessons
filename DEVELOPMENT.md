@@ -343,10 +343,10 @@ python3 -m pytest tests/ -v
 
 # Run specific test file
 python3 -m pytest tests/test_lessons_manager.py -v  # 62 tests
-python3 -m pytest tests/test_approaches.py -v       # 139 tests
+python3 -m pytest tests/test_handoffs.py -v         # 139 tests
 
 # Run specific test
-python3 -m pytest tests/test_approaches.py::TestPhaseDetectionFromTools -v
+python3 -m pytest tests/test_handoffs.py::TestPhaseDetectionFromTools -v
 ```
 
 See [docs/TESTING.md](docs/TESTING.md) for detailed testing guide.

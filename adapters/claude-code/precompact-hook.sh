@@ -11,7 +11,9 @@
 
 set -uo pipefail
 
-LESSONS_BASE="${LESSONS_BASE:-$HOME/.config/coding-agent-lessons}"
+# Support both new (RECALL_*) and old (LESSONS_*) env vars for backward compatibility
+LESSONS_BASE="${RECALL_BASE:-${LESSONS_BASE:-$HOME/.config/coding-agent-lessons}}"
+LESSONS_DEBUG="${RECALL_DEBUG:-${LESSONS_DEBUG:-}}"
 # Python manager - try installed location first, fall back to dev location
 if [[ -f "$LESSONS_BASE/cli.py" ]]; then
     PYTHON_MANAGER="$LESSONS_BASE/cli.py"

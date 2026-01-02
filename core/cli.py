@@ -3,7 +3,8 @@
 """
 CLI interface for the lessons manager.
 
-This module provides the command-line interface for managing lessons and approaches.
+This module provides the command-line interface for managing lessons and handoffs.
+(Handoffs were formerly called "approaches".)
 
 Usage:
     python3 core/cli.py <command> [args]
@@ -22,6 +23,14 @@ try:
 except ImportError:
     from manager import LessonsManager
     from models import ROBOT_EMOJI, LessonRating
+
+
+def _get_lessons_base() -> Path:
+    """Get the system lessons base directory, checking RECALL_BASE first, then LESSONS_BASE."""
+    base_path = os.environ.get("RECALL_BASE") or os.environ.get("LESSONS_BASE")
+    if base_path:
+        return Path(base_path)
+    return Path.home() / ".config" / "coding-agent-lessons"
 
 
 def main():
@@ -111,9 +120,9 @@ def main():
         "--timeout", type=int, default=30, help="Timeout in seconds for Haiku call"
     )
 
-    # approach command (with subcommands)
-    approach_parser = subparsers.add_parser("approach", help="Manage approaches")
-    approach_subparsers = approach_parser.add_subparsers(dest="approach_command", help="Approach commands")
+    # handoff command (with subcommands) - "approach" is kept as alias for backward compat
+    approach_parser = subparsers.add_parser("handoff", aliases=["approach"], help="Manage handoffs (work tracking)")
+    approach_subparsers = approach_parser.add_subparsers(dest="approach_command", help="Handoff commands")
 
     # approach add (alias: start)
     approach_add_parser = approach_subparsers.add_parser("add", aliases=["start"], help="Add a new approach")
@@ -191,12 +200,8 @@ def main():
         else:
             project_root = Path.cwd()
 
-    # Lessons base - check env var first, then use default
-    lessons_base_env = os.environ.get("LESSONS_BASE")
-    if lessons_base_env:
-        lessons_base = Path(lessons_base_env)
-    else:
-        lessons_base = Path.home() / ".config" / "coding-agent-lessons"
+    # Lessons base - use helper that checks RECALL_BASE first, then LESSONS_BASE
+    lessons_base = _get_lessons_base()
     manager = LessonsManager(lessons_base, project_root)
 
     try:
@@ -294,7 +299,7 @@ def main():
             result = manager.score_relevance(args.text, timeout_seconds=args.timeout)
             print(result.format(top_n=args.top, min_score=args.min_score))
 
-        elif args.command == "approach":
+        elif args.command in ("handoff", "approach"):
             if not args.approach_command:
                 approach_parser.print_help()
                 sys.exit(1)

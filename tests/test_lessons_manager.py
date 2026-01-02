@@ -1284,7 +1284,7 @@ class TestCLI:
         )
 
         # Manually make a lesson stale by editing the file
-        lessons_file = temp_project_root / ".coding-agent-lessons" / "LESSONS.md"
+        lessons_file = manager.project_lessons_file
         content = lessons_file.read_text()
         old_date = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
         content = content.replace(datetime.now().strftime("%Y-%m-%d"), old_date)
@@ -1401,7 +1401,7 @@ class TestHookPathResolution:
             "parsing.py",
             "file_lock.py",
             "lessons.py",
-            "approaches.py",
+            "handoffs.py",  # Renamed from approaches.py
             "__init__.py",
         ]
 

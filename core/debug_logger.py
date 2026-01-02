@@ -4,7 +4,7 @@
 Debug logging for lessons manager.
 
 Outputs JSON lines format to ~/.config/coding-agent-lessons/debug.log
-when LESSONS_DEBUG is set.
+when RECALL_DEBUG or LESSONS_DEBUG is set.
 
 Levels:
   0 or unset: disabled
@@ -24,8 +24,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
-# Configuration
-DEBUG_ENV_VAR = "LESSONS_DEBUG"
+# Configuration - support both new and old env var names
+DEBUG_ENV_VAR = "RECALL_DEBUG"  # New name
+DEBUG_ENV_VAR_LEGACY = "LESSONS_DEBUG"  # Old name for backward compat
 LOG_FILE_NAME = "debug.log"
 MAX_LOG_SIZE_MB = 50
 MAX_LOG_FILES = 3  # Keep debug.log, debug.log.1, debug.log.2
@@ -43,8 +44,12 @@ def _get_session_id() -> str:
 
 
 def _get_debug_level() -> int:
-    """Get the configured debug level from environment."""
-    level = os.environ.get(DEBUG_ENV_VAR, "0")
+    """Get the configured debug level from environment.
+
+    Checks RECALL_DEBUG first, then falls back to LESSONS_DEBUG for backward compat.
+    """
+    # Check new env var first, fall back to old
+    level = os.environ.get(DEBUG_ENV_VAR) or os.environ.get(DEBUG_ENV_VAR_LEGACY, "0")
     try:
         return int(level)
     except ValueError:
@@ -53,9 +58,14 @@ def _get_debug_level() -> int:
 
 
 def _get_log_path() -> Path:
-    """Get the log file path."""
+    """Get the log file path.
+
+    Checks RECALL_BASE first, then falls back to LESSONS_BASE for backward compat.
+    """
     lessons_base = Path(
-        os.environ.get("LESSONS_BASE", Path.home() / ".config" / "coding-agent-lessons")
+        os.environ.get("RECALL_BASE")
+        or os.environ.get("LESSONS_BASE")
+        or (Path.home() / ".config" / "coding-agent-lessons")
     )
     return lessons_base / LOG_FILE_NAME
 
@@ -227,6 +237,28 @@ class DebugLogger:
             }
         )
 
+    def handoff_created(
+        self,
+        handoff_id: str,
+        title: str,
+        phase: str,
+        agent: str,
+    ) -> None:
+        """Log new handoff creation."""
+        if self._level < 1:
+            return
+        self._write(
+            {
+                "event": "handoff_created",
+                "level": "info",
+                "handoff_id": handoff_id,
+                "title": title,
+                "phase": phase,
+                "agent": agent,
+            }
+        )
+
+    # Backward compatibility alias
     def approach_created(
         self,
         approach_id: str,
@@ -234,59 +266,69 @@ class DebugLogger:
         phase: str,
         agent: str,
     ) -> None:
-        """Log new approach creation."""
-        if self._level < 1:
-            return
-        self._write(
-            {
-                "event": "approach_created",
-                "level": "info",
-                "approach_id": approach_id,
-                "title": title,
-                "phase": phase,
-                "agent": agent,
-            }
-        )
+        """Backward compatibility alias for handoff_created."""
+        return self.handoff_created(handoff_id=approach_id, title=title, phase=phase, agent=agent)
 
-    def approach_change(
+    def handoff_change(
         self,
-        approach_id: str,
+        handoff_id: str,
         action: str,  # status_change, phase_change, agent_change, tried_added
         old_value: Optional[str] = None,
         new_value: Optional[str] = None,
     ) -> None:
-        """Log approach state changes."""
+        """Log handoff state changes."""
         if self._level < 1:
             return
         self._write(
             {
-                "event": "approach_change",
+                "event": "handoff_change",
                 "level": "info",
-                "approach_id": approach_id,
+                "handoff_id": handoff_id,
                 "action": action,
                 "old_value": old_value,
                 "new_value": new_value,
             }
         )
 
+    # Backward compatibility alias
+    def approach_change(
+        self,
+        approach_id: str,
+        action: str,
+        old_value: Optional[str] = None,
+        new_value: Optional[str] = None,
+    ) -> None:
+        """Backward compatibility alias for handoff_change."""
+        return self.handoff_change(handoff_id=approach_id, action=action, old_value=old_value, new_value=new_value)
+
+    def handoff_completed(
+        self,
+        handoff_id: str,
+        tried_count: int,
+        duration_days: Optional[int] = None,
+    ) -> None:
+        """Log handoff completion."""
+        if self._level < 1:
+            return
+        self._write(
+            {
+                "event": "handoff_completed",
+                "level": "info",
+                "handoff_id": handoff_id,
+                "tried_count": tried_count,
+                "duration_days": duration_days,
+            }
+        )
+
+    # Backward compatibility alias
     def approach_completed(
         self,
         approach_id: str,
         tried_count: int,
         duration_days: Optional[int] = None,
     ) -> None:
-        """Log approach completion."""
-        if self._level < 1:
-            return
-        self._write(
-            {
-                "event": "approach_completed",
-                "level": "info",
-                "approach_id": approach_id,
-                "tried_count": tried_count,
-                "duration_days": duration_days,
-            }
-        )
+        """Backward compatibility alias for handoff_completed."""
+        return self.handoff_completed(handoff_id=approach_id, tried_count=tried_count, duration_days=duration_days)
 
     def error(self, operation: str, error: str, context: Optional[Dict] = None) -> None:
         """Log errors - level 1 (always shown when debug enabled)."""

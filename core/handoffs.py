@@ -1,0 +1,1651 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""
+Handoffs mixin for the LessonsManager class.
+
+This module contains all handoff-related methods as a mixin class.
+Handoffs track multi-step work across sessions (formerly called "approaches").
+"""
+
+import re
+from collections import defaultdict
+from datetime import date, timedelta
+from pathlib import Path
+from typing import Dict, List, Optional
+
+# Handle both module import and direct script execution
+try:
+    from core.debug_logger import get_logger
+    from core.file_lock import FileLock
+    from core.models import (
+        # Constants
+        HANDOFF_MAX_COMPLETED,
+        HANDOFF_MAX_AGE_DAYS,
+        HANDOFF_STALE_DAYS,
+        HANDOFF_COMPLETED_ARCHIVE_DAYS,
+        # Dataclasses
+        TriedStep,
+        Handoff,
+        HandoffCompleteResult,
+        # Backward compatibility aliases
+        TriedApproach,
+        Approach,
+        ApproachCompleteResult,
+        APPROACH_MAX_COMPLETED,
+        APPROACH_MAX_AGE_DAYS,
+        APPROACH_STALE_DAYS,
+        APPROACH_COMPLETED_ARCHIVE_DAYS,
+    )
+except ImportError:
+    from debug_logger import get_logger
+    from file_lock import FileLock
+    from models import (
+        # Constants
+        HANDOFF_MAX_COMPLETED,
+        HANDOFF_MAX_AGE_DAYS,
+        HANDOFF_STALE_DAYS,
+        HANDOFF_COMPLETED_ARCHIVE_DAYS,
+        # Dataclasses
+        TriedStep,
+        Handoff,
+        HandoffCompleteResult,
+        # Backward compatibility aliases
+        TriedApproach,
+        Approach,
+        ApproachCompleteResult,
+        APPROACH_MAX_COMPLETED,
+        APPROACH_MAX_AGE_DAYS,
+        APPROACH_STALE_DAYS,
+        APPROACH_COMPLETED_ARCHIVE_DAYS,
+    )
+
+
+def _get_recall_dir() -> str:
+    """Get the per-project data directory name, checking for new name first."""
+    return ".recall"
+
+
+def _get_legacy_dir() -> str:
+    """Get the legacy per-project data directory name."""
+    return ".coding-agent-lessons"
+
+
+class HandoffsMixin:
+    """
+    Mixin containing handoff-related methods.
+
+    This mixin expects the following attributes to be set on the class:
+    - self.project_root: Path to project root
+    """
+
+    # Valid status and outcome values
+    VALID_STATUSES = {"not_started", "in_progress", "blocked", "completed"}
+    VALID_OUTCOMES = {"success", "fail", "partial"}
+    VALID_PHASES = {"research", "planning", "implementing", "review"}
+    VALID_AGENTS = {"explore", "general-purpose", "plan", "review", "user"}
+
+    # -------------------------------------------------------------------------
+    # Handoffs Tracking
+    # -------------------------------------------------------------------------
+
+    def _get_project_data_dir(self) -> Path:
+        """Get the project data directory, preferring .recall/ over .coding-agent-lessons/."""
+        recall_dir = self.project_root / _get_recall_dir()
+        legacy_dir = self.project_root / _get_legacy_dir()
+
+        # Prefer new directory if it exists, otherwise use legacy
+        if recall_dir.exists():
+            return recall_dir
+        elif legacy_dir.exists():
+            return legacy_dir
+        else:
+            # Default to new directory for new projects
+            return recall_dir
+
+    @property
+    def project_handoffs_file(self) -> Path:
+        """Path to the project handoffs file."""
+        data_dir = self._get_project_data_dir()
+        # Check for new name first
+        new_path = data_dir / "HANDOFFS.md"
+        old_path = data_dir / "APPROACHES.md"
+        if new_path.exists():
+            return new_path
+        elif old_path.exists():
+            return old_path
+        else:
+            # Default to new name for new files
+            return self.project_root / _get_recall_dir() / "HANDOFFS.md"
+
+    @property
+    def project_handoffs_archive(self) -> Path:
+        """Path to the project handoffs archive file."""
+        data_dir = self._get_project_data_dir()
+        # Check for new name first
+        new_path = data_dir / "HANDOFFS_ARCHIVE.md"
+        old_path = data_dir / "APPROACHES_ARCHIVE.md"
+        if new_path.exists():
+            return new_path
+        elif old_path.exists():
+            return old_path
+        else:
+            # Default to new name for new files
+            return self.project_root / _get_recall_dir() / "HANDOFFS_ARCHIVE.md"
+
+    # Backward compatibility aliases
+    @property
+    def project_approaches_file(self) -> Path:
+        """Backward compatibility alias for project_handoffs_file."""
+        return self.project_handoffs_file
+
+    @property
+    def project_approaches_archive(self) -> Path:
+        """Backward compatibility alias for project_handoffs_archive."""
+        return self.project_handoffs_archive
+
+    def _init_handoffs_file(self) -> None:
+        """Initialize handoffs file with header if it doesn't exist."""
+        file_path = self.project_handoffs_file
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if file_path.exists():
+            return
+
+        header = """# HANDOFFS.md - Active Work Tracking
+
+> Track ongoing work with tried steps and next steps.
+> When completed, review for lessons to extract.
+
+## Active Handoffs
+
+"""
+        file_path.write_text(header)
+
+    # Backward compatibility alias
+    def _init_approaches_file(self) -> None:
+        """Backward compatibility alias for _init_handoffs_file."""
+        return self._init_handoffs_file()
+
+    def _parse_handoffs_file(self, file_path: Path) -> List[Handoff]:
+        """Parse all handoffs from a file."""
+        if not file_path.exists():
+            return []
+
+        content = file_path.read_text()
+        if not content.strip():
+            return []
+
+        handoffs = []
+        lines = content.split("\n")
+
+        # Pattern for handoff header: ### [A001] Title (still uses A prefix for IDs)
+        header_pattern = re.compile(r"^###\s*\[([A-Z]\d{3})\]\s*(.+)$")
+        # New format status line: - **Status**: status | **Phase**: phase | **Agent**: agent
+        status_pattern_new = re.compile(
+            r"^\s*-\s*\*\*Status\*\*:\s*(\w+)"
+            r"\s*\|\s*\*\*Phase\*\*:\s*([\w-]+)"
+            r"\s*\|\s*\*\*Agent\*\*:\s*([\w-]+)"
+        )
+        # Old format status line: - **Status**: status | **Created**: date | **Updated**: date
+        status_pattern_old = re.compile(
+            r"^\s*-\s*\*\*Status\*\*:\s*(\w+)"
+            r"\s*\|\s*\*\*Created\*\*:\s*(\d{4}-\d{2}-\d{2})"
+            r"\s*\|\s*\*\*Updated\*\*:\s*(\d{4}-\d{2}-\d{2})"
+        )
+        # Pattern for dates line: - **Created**: date | **Updated**: date
+        dates_pattern = re.compile(
+            r"^\s*-\s*\*\*Created\*\*:\s*(\d{4}-\d{2}-\d{2})"
+            r"\s*\|\s*\*\*Updated\*\*:\s*(\d{4}-\d{2}-\d{2})"
+        )
+        # Pattern for files line: - **Files**: file1, file2
+        files_pattern = re.compile(r"^\s*-\s*\*\*Files\*\*:\s*(.*)$")
+        # Pattern for description line: - **Description**: desc
+        desc_pattern = re.compile(r"^\s*-\s*\*\*Description\*\*:\s*(.*)$")
+        # Pattern for tried item: N. [outcome] description
+        tried_pattern = re.compile(r"^\s*\d+\.\s*\[(\w+)\]\s*(.+)$")
+
+        idx = 0
+        while idx < len(lines):
+            header_match = header_pattern.match(lines[idx])
+            if not header_match:
+                idx += 1
+                continue
+
+            handoff_id = header_match.group(1)
+            title = header_match.group(2).strip()
+            idx += 1
+
+            # Parse status line - try new format first, then old format
+            if idx >= len(lines):
+                continue
+
+            status = None
+            phase = "research"  # default
+            agent = "user"  # default
+            created = None
+            updated = None
+
+            status_match_new = status_pattern_new.match(lines[idx])
+            status_match_old = status_pattern_old.match(lines[idx])
+
+            if status_match_new:
+                # New format: status, phase, agent on first line
+                status = status_match_new.group(1)
+                phase = status_match_new.group(2)
+                agent = status_match_new.group(3)
+                idx += 1
+
+                # Parse dates from next line
+                if idx < len(lines):
+                    dates_match = dates_pattern.match(lines[idx])
+                    if dates_match:
+                        try:
+                            created = date.fromisoformat(dates_match.group(1))
+                            updated = date.fromisoformat(dates_match.group(2))
+                        except ValueError:
+                            continue
+                        idx += 1
+                    else:
+                        # Malformed - skip
+                        continue
+                else:
+                    continue
+            elif status_match_old:
+                # Old format: status, created, updated on same line
+                status = status_match_old.group(1)
+                try:
+                    created = date.fromisoformat(status_match_old.group(2))
+                    updated = date.fromisoformat(status_match_old.group(3))
+                except ValueError:
+                    continue
+                idx += 1
+            else:
+                # Malformed - skip this handoff
+                continue
+
+            # Parse files line
+            files = []
+            if idx < len(lines):
+                files_match = files_pattern.match(lines[idx])
+                if files_match:
+                    files_str = files_match.group(1).strip()
+                    if files_str:
+                        files = [f.strip() for f in files_str.split(",") if f.strip()]
+                    idx += 1
+
+            # Parse description line
+            description = ""
+            if idx < len(lines):
+                desc_match = desc_pattern.match(lines[idx])
+                if desc_match:
+                    description = desc_match.group(1).strip()
+                    idx += 1
+
+            # Parse checkpoint line (optional)
+            checkpoint = ""
+            checkpoint_pattern = re.compile(r"^\s*-\s*\*\*Checkpoint\*\*:\s*(.*)$")
+            if idx < len(lines):
+                checkpoint_match = checkpoint_pattern.match(lines[idx])
+                if checkpoint_match:
+                    checkpoint = checkpoint_match.group(1).strip()
+                    idx += 1
+
+            # Parse last session line (optional)
+            last_session = None
+            last_session_pattern = re.compile(r"^\s*-\s*\*\*Last Session\*\*:\s*(\d{4}-\d{2}-\d{2})$")
+            if idx < len(lines):
+                last_session_match = last_session_pattern.match(lines[idx])
+                if last_session_match:
+                    try:
+                        last_session = date.fromisoformat(last_session_match.group(1))
+                    except ValueError:
+                        pass
+                    idx += 1
+
+            # Parse tried section
+            tried = []
+            # Look for **Tried**: header
+            while idx < len(lines) and not lines[idx].strip().startswith("**Tried**"):
+                idx += 1
+            if idx < len(lines) and "**Tried**:" in lines[idx]:
+                idx += 1
+                while idx < len(lines):
+                    line = lines[idx].strip()
+                    if not line or line.startswith("**Next**:") or line == "---":
+                        break
+                    tried_match = tried_pattern.match(lines[idx])
+                    if tried_match:
+                        tried.append(TriedStep(
+                            outcome=tried_match.group(1),
+                            description=tried_match.group(2).strip()
+                        ))
+                    idx += 1
+
+            # Parse next steps
+            next_steps = ""
+            while idx < len(lines) and not lines[idx].strip().startswith("**Next**"):
+                idx += 1
+            if idx < len(lines) and "**Next**:" in lines[idx]:
+                # Extract text after **Next**:
+                next_match = re.match(r"^\*\*Next\*\*:\s*(.*)$", lines[idx].strip())
+                if next_match:
+                    next_steps = next_match.group(1).strip()
+                idx += 1
+
+            # Skip to separator or next handoff
+            while idx < len(lines) and lines[idx].strip() != "---":
+                idx += 1
+            idx += 1  # Skip the separator
+
+            handoffs.append(Handoff(
+                id=handoff_id,
+                title=title,
+                status=status,
+                created=created,
+                updated=updated,
+                files=files,
+                description=description,
+                tried=tried,
+                next_steps=next_steps,
+                phase=phase,
+                agent=agent,
+                checkpoint=checkpoint,
+                last_session=last_session,
+            ))
+
+        return handoffs
+
+    # Backward compatibility alias
+    def _parse_approaches_file(self, file_path: Path) -> List[Handoff]:
+        """Backward compatibility alias for _parse_handoffs_file."""
+        return self._parse_handoffs_file(file_path)
+
+    def _format_handoff(self, handoff: Handoff) -> str:
+        """Format a handoff for markdown storage."""
+        lines = [
+            f"### [{handoff.id}] {handoff.title}",
+            f"- **Status**: {handoff.status} | **Phase**: {handoff.phase} | **Agent**: {handoff.agent}",
+            f"- **Created**: {handoff.created.isoformat()} | **Updated**: {handoff.updated.isoformat()}",
+            f"- **Files**: {', '.join(handoff.files)}",
+            f"- **Description**: {handoff.description}",
+        ]
+
+        # Add checkpoint if present
+        if handoff.checkpoint:
+            session_str = handoff.last_session.isoformat() if handoff.last_session else ""
+            lines.append(f"- **Checkpoint**: {handoff.checkpoint}")
+            if session_str:
+                lines.append(f"- **Last Session**: {session_str}")
+
+        lines.append("")
+
+        lines.append("**Tried**:")
+        for i, tried in enumerate(handoff.tried, 1):
+            lines.append(f"{i}. [{tried.outcome}] {tried.description}")
+
+        lines.append("")
+        lines.append(f"**Next**: {handoff.next_steps}")
+        lines.append("")
+        lines.append("---")
+
+        return "\n".join(lines)
+
+    # Backward compatibility alias
+    def _format_approach(self, handoff: Handoff) -> str:
+        """Backward compatibility alias for _format_handoff."""
+        return self._format_handoff(handoff)
+
+    def _write_handoffs_file(self, handoffs: List[Handoff]) -> None:
+        """Write handoffs back to file."""
+        self._init_handoffs_file()
+
+        header = """# HANDOFFS.md - Active Work Tracking
+
+> Track ongoing work with tried steps and next steps.
+> When completed, review for lessons to extract.
+
+## Active Handoffs
+
+"""
+        parts = [header]
+        for handoff in handoffs:
+            parts.append(self._format_handoff(handoff))
+            parts.append("")
+
+        self.project_handoffs_file.write_text("\n".join(parts))
+
+    # Backward compatibility alias
+    def _write_approaches_file(self, handoffs: List[Handoff]) -> None:
+        """Backward compatibility alias for _write_handoffs_file."""
+        return self._write_handoffs_file(handoffs)
+
+    def _get_next_handoff_id(self) -> str:
+        """Get the next available handoff ID."""
+        max_id = 0
+
+        # Check main file
+        if self.project_handoffs_file.exists():
+            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+            for handoff in handoffs:
+                try:
+                    num = int(handoff.id[1:])
+                    max_id = max(max_id, num)
+                except ValueError:
+                    pass
+
+        # Also check archive to prevent ID reuse
+        if self.project_handoffs_archive.exists():
+            content = self.project_handoffs_archive.read_text()
+            for match in re.finditer(r"\[A(\d{3})\]", content):
+                try:
+                    num = int(match.group(1))
+                    max_id = max(max_id, num)
+                except ValueError:
+                    pass
+
+        return f"A{max_id + 1:03d}"
+
+    # Backward compatibility alias
+    def _get_next_approach_id(self) -> str:
+        """Backward compatibility alias for _get_next_handoff_id."""
+        return self._get_next_handoff_id()
+
+    def handoff_add(
+        self,
+        title: str,
+        desc: Optional[str] = None,
+        files: Optional[List[str]] = None,
+        phase: str = "research",
+        agent: str = "user",
+    ) -> str:
+        """
+        Add a new handoff.
+
+        Args:
+            title: Handoff title
+            desc: Optional description
+            files: Optional list of files
+            phase: Initial phase (research, planning, implementing, review)
+            agent: Agent working on this (explore, general-purpose, plan, review, user)
+
+        Returns:
+            The assigned handoff ID (e.g., 'A001')
+
+        Raises:
+            ValueError: If invalid phase or agent
+        """
+        if phase not in self.VALID_PHASES:
+            raise ValueError(f"Invalid phase: {phase}")
+        if agent not in self.VALID_AGENTS:
+            raise ValueError(f"Invalid agent: {agent}")
+
+        self._init_handoffs_file()
+
+        with FileLock(self.project_handoffs_file):
+            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+            handoff_id = self._get_next_handoff_id()
+            today = date.today()
+
+            handoff = Handoff(
+                id=handoff_id,
+                title=title,
+                status="not_started",
+                created=today,
+                updated=today,
+                files=files or [],
+                description=desc or "",
+                tried=[],
+                next_steps="",
+                phase=phase,
+                agent=agent,
+            )
+
+            handoffs.append(handoff)
+            self._write_handoffs_file(handoffs)
+
+        # Log handoff created
+        logger = get_logger()
+        logger.handoff_created(
+            handoff_id=handoff_id,
+            title=title,
+            phase=phase,
+            agent=agent,
+        )
+
+        return handoff_id
+
+    # Backward compatibility alias
+    def approach_add(
+        self,
+        title: str,
+        desc: Optional[str] = None,
+        files: Optional[List[str]] = None,
+        phase: str = "research",
+        agent: str = "user",
+    ) -> str:
+        """Backward compatibility alias for handoff_add."""
+        return self.handoff_add(title=title, desc=desc, files=files, phase=phase, agent=agent)
+
+    def handoff_update_status(self, handoff_id: str, status: str) -> None:
+        """
+        Update a handoff's status.
+
+        Args:
+            handoff_id: The handoff ID
+            status: New status (not_started, in_progress, blocked, completed)
+
+        Raises:
+            ValueError: If handoff not found or invalid status
+        """
+        if status not in self.VALID_STATUSES:
+            raise ValueError(f"Invalid status: {status}")
+
+        old_status = None
+        with FileLock(self.project_handoffs_file):
+            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+
+            found = False
+            for handoff in handoffs:
+                if handoff.id == handoff_id:
+                    old_status = handoff.status
+                    handoff.status = status
+                    handoff.updated = date.today()
+                    found = True
+                    break
+
+            if not found:
+                raise ValueError(f"Handoff {handoff_id} not found")
+
+            self._write_handoffs_file(handoffs)
+
+        # Log status change
+        logger = get_logger()
+        logger.handoff_change(
+            handoff_id=handoff_id,
+            action="status_change",
+            old_value=old_status,
+            new_value=status,
+        )
+
+    # Backward compatibility alias
+    def approach_update_status(self, approach_id: str, status: str) -> None:
+        """Backward compatibility alias for handoff_update_status."""
+        return self.handoff_update_status(approach_id, status)
+
+    def handoff_update_phase(self, handoff_id: str, phase: str) -> None:
+        """
+        Update a handoff's phase.
+
+        Args:
+            handoff_id: The handoff ID
+            phase: New phase (research, planning, implementing, review)
+
+        Raises:
+            ValueError: If handoff not found or invalid phase
+        """
+        if phase not in self.VALID_PHASES:
+            raise ValueError(f"Invalid phase: {phase}")
+
+        old_phase = None
+        with FileLock(self.project_handoffs_file):
+            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+
+            found = False
+            for handoff in handoffs:
+                if handoff.id == handoff_id:
+                    old_phase = handoff.phase
+                    handoff.phase = phase
+                    handoff.updated = date.today()
+                    found = True
+                    break
+
+            if not found:
+                raise ValueError(f"Handoff {handoff_id} not found")
+
+            self._write_handoffs_file(handoffs)
+
+        # Log phase change
+        logger = get_logger()
+        logger.handoff_change(
+            handoff_id=handoff_id,
+            action="phase_change",
+            old_value=old_phase,
+            new_value=phase,
+        )
+
+    # Backward compatibility alias
+    def approach_update_phase(self, approach_id: str, phase: str) -> None:
+        """Backward compatibility alias for handoff_update_phase."""
+        return self.handoff_update_phase(approach_id, phase)
+
+    def handoff_update_agent(self, handoff_id: str, agent: str) -> None:
+        """
+        Update a handoff's agent.
+
+        Args:
+            handoff_id: The handoff ID
+            agent: New agent (explore, general-purpose, plan, review, user)
+
+        Raises:
+            ValueError: If handoff not found or invalid agent
+        """
+        if agent not in self.VALID_AGENTS:
+            raise ValueError(f"Invalid agent: {agent}")
+
+        old_agent = None
+        with FileLock(self.project_handoffs_file):
+            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+
+            found = False
+            for handoff in handoffs:
+                if handoff.id == handoff_id:
+                    old_agent = handoff.agent
+                    handoff.agent = agent
+                    handoff.updated = date.today()
+                    found = True
+                    break
+
+            if not found:
+                raise ValueError(f"Handoff {handoff_id} not found")
+
+            self._write_handoffs_file(handoffs)
+
+        # Log agent change
+        logger = get_logger()
+        logger.handoff_change(
+            handoff_id=handoff_id,
+            action="agent_change",
+            old_value=old_agent,
+            new_value=agent,
+        )
+
+    # Backward compatibility alias
+    def approach_update_agent(self, approach_id: str, agent: str) -> None:
+        """Backward compatibility alias for handoff_update_agent."""
+        return self.handoff_update_agent(approach_id, agent)
+
+    # Patterns that indicate work is complete (must be at start, case-insensitive)
+    COMPLETION_PATTERNS = ("final", "done", "complete", "finished")
+
+    # Keywords that indicate implementing phase (case-insensitive)
+    IMPLEMENTING_KEYWORDS = (
+        "implement", "build", "create", "add", "fix", "write", "update",
+        "refactor", "remove", "delete", "rename", "move", "extract",
+    )
+
+    # Phases that should not be changed by auto-update (already past implementing)
+    PROTECTED_PHASES = ("implementing", "review")
+
+    # Number of successful steps that triggers auto-bump to implementing
+    IMPLEMENTING_STEP_THRESHOLD = 10
+
+    # Keywords for categorizing tried steps by theme
+    STEP_THEMES = {
+        "guard": ["guard", "is_destroyed", "destructor", "cleanup"],
+        "plugin": ["plugin", "phase"],
+        "ui": ["xml", "button", "modal", "panel", "ui_"],
+        "fix": ["fix", "bug", "issue", "error"],
+        "refactor": ["refactor", "move", "rename", "extract"],
+        "test": ["test", "verify", "build"],
+    }
+
+    def _extract_themes(self, tried: List[TriedStep]) -> Dict[str, int]:
+        """
+        Count tried steps by theme based on keyword matching.
+
+        Args:
+            tried: List of tried steps
+
+        Returns:
+            Dict mapping theme names to counts
+        """
+        if not tried:
+            return {}
+
+        counts: Dict[str, int] = defaultdict(int)
+        for t in tried:
+            desc_lower = t.description.lower()
+            matched = False
+            for theme, keywords in self.STEP_THEMES.items():
+                if any(kw in desc_lower for kw in keywords):
+                    counts[theme] += 1
+                    matched = True
+                    break
+            if not matched:
+                counts["other"] += 1
+        return dict(counts)
+
+    def _summarize_tried_steps(
+        self, tried: List[TriedStep], max_recent: int = 3
+    ) -> List[str]:
+        """
+        Summarize tried steps compactly for injection.
+
+        Args:
+            tried: List of tried steps
+            max_recent: Number of recent steps to show (default 3)
+
+        Returns:
+            List of formatted lines for the summary
+        """
+        if not tried:
+            return []
+
+        lines = []
+        total = len(tried)
+        success = sum(1 for t in tried if t.outcome == "success")
+        fail = sum(1 for t in tried if t.outcome == "fail")
+
+        # Outcome summary
+        if fail == 0:
+            outcome_str = f"{total} steps (all success)"
+        else:
+            outcome_str = f"{total} steps ({success}✓ {fail}✗)"
+
+        lines.append(f"- **Progress**: {outcome_str}")
+
+        # Last N steps
+        recent = tried[-max_recent:]
+        for t in recent:
+            desc = t.description[:50] + "..." if len(t.description) > 50 else t.description
+            lines.append(f"  → {desc}")
+
+        # Theme summary for earlier steps (if more than max_recent)
+        if len(tried) > max_recent:
+            earlier = tried[:-max_recent]
+            themes = self._extract_themes(earlier)
+            if themes:
+                theme_strs = [f"{v} {k}" for k, v in sorted(themes.items(), key=lambda x: -x[1])]
+                lines.append(f"  Earlier: {', '.join(theme_strs[:4])}")  # Top 4 themes
+
+        return lines
+
+    def handoff_add_tried(
+        self,
+        handoff_id: str,
+        outcome: str,
+        description: str,
+    ) -> None:
+        """
+        Add a tried step.
+
+        Auto-completes handoff if description starts with a completion pattern
+        (e.g., "Final commit", "Done", "Finished") and outcome is "success".
+
+        Auto-updates phase to "implementing" if:
+        - Description contains implementing keywords (implement, build, create, etc.)
+        - OR there are 10+ successful tried steps
+
+        Args:
+            handoff_id: The handoff ID
+            outcome: success, fail, or partial
+            description: Description of what was tried
+
+        Raises:
+            ValueError: If handoff not found or invalid outcome
+        """
+        if outcome not in self.VALID_OUTCOMES:
+            raise ValueError(f"Invalid outcome: {outcome}")
+
+        with FileLock(self.project_handoffs_file):
+            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+
+            found = False
+            for handoff in handoffs:
+                if handoff.id == handoff_id:
+                    handoff.tried.append(TriedStep(
+                        outcome=outcome,
+                        description=description,
+                    ))
+                    handoff.updated = date.today()
+
+                    # Auto-complete on final pattern with success outcome
+                    if outcome == "success":
+                        desc_lower = description.lower().strip()
+                        if any(desc_lower.startswith(p) for p in self.COMPLETION_PATTERNS):
+                            handoff.status = "completed"
+                            handoff.phase = "review"
+
+                    # Auto-update phase to implementing (if not already in a later phase)
+                    if handoff.phase not in self.PROTECTED_PHASES:
+                        should_bump = False
+
+                        # Check for implementing keywords in description
+                        desc_lower = description.lower()
+                        if any(kw in desc_lower for kw in self.IMPLEMENTING_KEYWORDS):
+                            should_bump = True
+
+                        # Check for 10+ successful steps
+                        if not should_bump:
+                            success_count = sum(
+                                1 for t in handoff.tried if t.outcome == "success"
+                            )
+                            if success_count >= self.IMPLEMENTING_STEP_THRESHOLD:
+                                should_bump = True
+
+                        if should_bump:
+                            handoff.phase = "implementing"
+
+                    found = True
+                    break
+
+            if not found:
+                raise ValueError(f"Handoff {handoff_id} not found")
+
+            self._write_handoffs_file(handoffs)
+
+    # Backward compatibility alias
+    def approach_add_tried(self, approach_id: str, outcome: str, description: str) -> None:
+        """Backward compatibility alias for handoff_add_tried."""
+        return self.handoff_add_tried(approach_id, outcome, description)
+
+    def handoff_update_next(self, handoff_id: str, text: str) -> None:
+        """
+        Update a handoff's next steps.
+
+        Args:
+            handoff_id: The handoff ID
+            text: Next steps text
+
+        Raises:
+            ValueError: If handoff not found
+        """
+        with FileLock(self.project_handoffs_file):
+            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+
+            found = False
+            for handoff in handoffs:
+                if handoff.id == handoff_id:
+                    handoff.next_steps = text
+                    handoff.updated = date.today()
+                    found = True
+                    break
+
+            if not found:
+                raise ValueError(f"Handoff {handoff_id} not found")
+
+            self._write_handoffs_file(handoffs)
+
+    # Backward compatibility alias
+    def approach_update_next(self, approach_id: str, text: str) -> None:
+        """Backward compatibility alias for handoff_update_next."""
+        return self.handoff_update_next(approach_id, text)
+
+    def handoff_update_files(self, handoff_id: str, files_list: List[str]) -> None:
+        """
+        Update a handoff's file list.
+
+        Args:
+            handoff_id: The handoff ID
+            files_list: List of files
+
+        Raises:
+            ValueError: If handoff not found
+        """
+        with FileLock(self.project_handoffs_file):
+            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+
+            found = False
+            for handoff in handoffs:
+                if handoff.id == handoff_id:
+                    handoff.files = files_list
+                    handoff.updated = date.today()
+                    found = True
+                    break
+
+            if not found:
+                raise ValueError(f"Handoff {handoff_id} not found")
+
+            self._write_handoffs_file(handoffs)
+
+    # Backward compatibility alias
+    def approach_update_files(self, approach_id: str, files_list: List[str]) -> None:
+        """Backward compatibility alias for handoff_update_files."""
+        return self.handoff_update_files(approach_id, files_list)
+
+    def handoff_update_desc(self, handoff_id: str, description: str) -> None:
+        """
+        Update a handoff's description.
+
+        Args:
+            handoff_id: The handoff ID
+            description: New description
+
+        Raises:
+            ValueError: If handoff not found
+        """
+        with FileLock(self.project_handoffs_file):
+            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+
+            found = False
+            for handoff in handoffs:
+                if handoff.id == handoff_id:
+                    handoff.description = description
+                    handoff.updated = date.today()
+                    found = True
+                    break
+
+            if not found:
+                raise ValueError(f"Handoff {handoff_id} not found")
+
+            self._write_handoffs_file(handoffs)
+
+    # Backward compatibility alias
+    def approach_update_desc(self, approach_id: str, description: str) -> None:
+        """Backward compatibility alias for handoff_update_desc."""
+        return self.handoff_update_desc(approach_id, description)
+
+    def handoff_update_checkpoint(self, handoff_id: str, checkpoint: str) -> None:
+        """
+        Update a handoff's checkpoint (progress summary from PreCompact hook).
+
+        Args:
+            handoff_id: The handoff ID
+            checkpoint: Progress summary text
+
+        Raises:
+            ValueError: If handoff not found
+        """
+        with FileLock(self.project_handoffs_file):
+            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+
+            found = False
+            for handoff in handoffs:
+                if handoff.id == handoff_id:
+                    handoff.checkpoint = checkpoint
+                    handoff.last_session = date.today()
+                    handoff.updated = date.today()
+                    found = True
+                    break
+
+            if not found:
+                raise ValueError(f"Handoff {handoff_id} not found")
+
+            self._write_handoffs_file(handoffs)
+
+    # Backward compatibility alias
+    def approach_update_checkpoint(self, approach_id: str, checkpoint: str) -> None:
+        """Backward compatibility alias for handoff_update_checkpoint."""
+        return self.handoff_update_checkpoint(approach_id, checkpoint)
+
+    def handoff_complete(self, handoff_id: str) -> HandoffCompleteResult:
+        """
+        Mark a handoff as completed and return extraction prompt.
+
+        Args:
+            handoff_id: The handoff ID
+
+        Returns:
+            HandoffCompleteResult with handoff data and extraction prompt
+
+        Raises:
+            ValueError: If handoff not found
+        """
+        with FileLock(self.project_handoffs_file):
+            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+
+            target = None
+            for handoff in handoffs:
+                if handoff.id == handoff_id:
+                    target = handoff
+                    break
+
+            if target is None:
+                raise ValueError(f"Handoff {handoff_id} not found")
+
+            target.status = "completed"
+            target.updated = date.today()
+            self._write_handoffs_file(handoffs)
+
+        # Generate extraction prompt
+        tried_summary = ""
+        if target.tried:
+            tried_lines = []
+            for tried in target.tried:
+                tried_lines.append(f"- [{tried.outcome}] {tried.description}")
+            tried_summary = "\n".join(tried_lines)
+
+        extraction_prompt = f"""Review this completed handoff for potential lessons to extract:
+
+**Title**: {target.title}
+**Description**: {target.description}
+
+**Tried steps**:
+{tried_summary if tried_summary else "(none)"}
+
+**Files affected**: {', '.join(target.files) if target.files else "(none)"}
+
+Consider extracting lessons about:
+1. What worked and why
+2. What didn't work and why
+3. Patterns or gotchas discovered
+4. Decisions made and their rationale
+"""
+
+        # Log handoff completed
+        duration_days = (date.today() - target.created).days if target.created else None
+        logger = get_logger()
+        logger.handoff_completed(
+            handoff_id=handoff_id,
+            tried_count=len(target.tried),
+            duration_days=duration_days,
+        )
+
+        return HandoffCompleteResult(
+            handoff=target,
+            extraction_prompt=extraction_prompt,
+        )
+
+    # Backward compatibility alias
+    def approach_complete(self, approach_id: str) -> HandoffCompleteResult:
+        """Backward compatibility alias for handoff_complete."""
+        return self.handoff_complete(approach_id)
+
+    def handoff_archive(self, handoff_id: str) -> None:
+        """
+        Archive a handoff to HANDOFFS_ARCHIVE.md.
+
+        Args:
+            handoff_id: The handoff ID
+
+        Raises:
+            ValueError: If handoff not found
+        """
+        with FileLock(self.project_handoffs_file):
+            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+
+            target = None
+            remaining = []
+            for handoff in handoffs:
+                if handoff.id == handoff_id:
+                    target = handoff
+                else:
+                    remaining.append(handoff)
+
+            if target is None:
+                raise ValueError(f"Handoff {handoff_id} not found")
+
+            # Append to archive file
+            archive_file = self.project_handoffs_archive
+            archive_file.parent.mkdir(parents=True, exist_ok=True)
+
+            if archive_file.exists():
+                archive_content = archive_file.read_text()
+            else:
+                archive_content = """# HANDOFFS_ARCHIVE.md - Archived Handoffs
+
+> Previously completed or archived handoffs.
+
+"""
+
+            archive_content += "\n" + self._format_handoff(target) + "\n"
+            archive_file.write_text(archive_content)
+
+            # Remove from main file
+            self._write_handoffs_file(remaining)
+
+    # Backward compatibility alias
+    def approach_archive(self, approach_id: str) -> None:
+        """Backward compatibility alias for handoff_archive."""
+        return self.handoff_archive(approach_id)
+
+    def handoff_delete(self, handoff_id: str) -> None:
+        """
+        Delete a handoff permanently (no archive).
+
+        Args:
+            handoff_id: The handoff ID
+
+        Raises:
+            ValueError: If handoff not found
+        """
+        with FileLock(self.project_handoffs_file):
+            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+
+            original_count = len(handoffs)
+            handoffs = [h for h in handoffs if h.id != handoff_id]
+
+            if len(handoffs) == original_count:
+                raise ValueError(f"Handoff {handoff_id} not found")
+
+            self._write_handoffs_file(handoffs)
+
+    # Backward compatibility alias
+    def approach_delete(self, approach_id: str) -> None:
+        """Backward compatibility alias for handoff_delete."""
+        return self.handoff_delete(approach_id)
+
+    def _archive_stale_handoffs(self) -> List[str]:
+        """
+        Auto-archive active handoffs that haven't been updated in HANDOFF_STALE_DAYS.
+
+        Returns:
+            List of archived handoff IDs
+        """
+        cutoff = date.today() - timedelta(days=HANDOFF_STALE_DAYS)
+        archived_ids = []
+
+        with FileLock(self.project_handoffs_file):
+            if not self.project_handoffs_file.exists():
+                return []
+
+            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+            stale = []
+            remaining = []
+
+            for handoff in handoffs:
+                # Only archive active (non-completed) handoffs that are stale
+                if handoff.status != "completed" and handoff.updated < cutoff:
+                    # Add stale note to description
+                    stale_note = f"[Auto-archived: stale after {HANDOFF_STALE_DAYS} days]"
+                    if handoff.description:
+                        handoff.description = f"{stale_note} {handoff.description}"
+                    else:
+                        handoff.description = stale_note
+                    stale.append(handoff)
+                    archived_ids.append(handoff.id)
+                else:
+                    remaining.append(handoff)
+
+            if not stale:
+                return []
+
+            # Archive stale handoffs
+            archive_file = self.project_handoffs_archive
+            archive_file.parent.mkdir(parents=True, exist_ok=True)
+
+            if archive_file.exists():
+                archive_content = archive_file.read_text()
+            else:
+                archive_content = """# HANDOFFS_ARCHIVE.md - Archived Handoffs
+
+> Previously completed or archived handoffs.
+
+"""
+
+            for handoff in stale:
+                archive_content += "\n" + self._format_handoff(handoff) + "\n"
+
+            archive_file.write_text(archive_content)
+            self._write_handoffs_file(remaining)
+
+        return archived_ids
+
+    # Backward compatibility alias
+    def _archive_stale_approaches(self) -> List[str]:
+        """Backward compatibility alias for _archive_stale_handoffs."""
+        return self._archive_stale_handoffs()
+
+    def _archive_old_completed_handoffs(self) -> List[str]:
+        """
+        Auto-archive completed handoffs older than HANDOFF_COMPLETED_ARCHIVE_DAYS.
+
+        Returns:
+            List of archived handoff IDs
+        """
+        cutoff = date.today() - timedelta(days=HANDOFF_COMPLETED_ARCHIVE_DAYS)
+        archived_ids = []
+
+        with FileLock(self.project_handoffs_file):
+            if not self.project_handoffs_file.exists():
+                return []
+
+            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+
+            old_completed = []
+            remaining = []
+
+            for handoff in handoffs:
+                # Only archive completed handoffs older than cutoff
+                if handoff.status == "completed" and handoff.updated < cutoff:
+                    old_completed.append(handoff)
+                    archived_ids.append(handoff.id)
+                else:
+                    remaining.append(handoff)
+
+            if not old_completed:
+                return []
+
+            # Archive old completed handoffs
+            archive_file = self.project_handoffs_archive
+            archive_file.parent.mkdir(parents=True, exist_ok=True)
+
+            if archive_file.exists():
+                archive_content = archive_file.read_text()
+            else:
+                archive_content = """# HANDOFFS_ARCHIVE.md - Archived Handoffs
+
+> Previously completed or archived handoffs.
+
+"""
+
+            for handoff in old_completed:
+                archive_content += "\n" + self._format_handoff(handoff) + "\n"
+
+            archive_file.write_text(archive_content)
+            self._write_handoffs_file(remaining)
+
+        return archived_ids
+
+    # Backward compatibility alias
+    def _archive_old_completed_approaches(self) -> List[str]:
+        """Backward compatibility alias for _archive_old_completed_handoffs."""
+        return self._archive_old_completed_handoffs()
+
+    def handoff_get(self, handoff_id: str) -> Optional[Handoff]:
+        """
+        Get a handoff by ID.
+
+        Args:
+            handoff_id: The handoff ID
+
+        Returns:
+            The Handoff object, or None if not found
+        """
+        if not self.project_handoffs_file.exists():
+            return None
+
+        handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+        for handoff in handoffs:
+            if handoff.id == handoff_id:
+                return handoff
+
+        return None
+
+    # Backward compatibility alias
+    def approach_get(self, approach_id: str) -> Optional[Handoff]:
+        """Backward compatibility alias for handoff_get."""
+        return self.handoff_get(approach_id)
+
+    def handoff_list(
+        self,
+        status_filter: Optional[str] = None,
+        include_completed: bool = False,
+    ) -> List[Handoff]:
+        """
+        List handoffs with optional filtering.
+
+        Args:
+            status_filter: Filter by specific status
+            include_completed: Include completed handoffs (default False)
+
+        Returns:
+            List of matching handoffs
+        """
+        if not self.project_handoffs_file.exists():
+            return []
+
+        handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+
+        if status_filter:
+            handoffs = [h for h in handoffs if h.status == status_filter]
+        elif not include_completed:
+            handoffs = [h for h in handoffs if h.status != "completed"]
+
+        return handoffs
+
+    # Backward compatibility alias
+    def approach_list(
+        self,
+        status_filter: Optional[str] = None,
+        include_completed: bool = False,
+    ) -> List[Handoff]:
+        """Backward compatibility alias for handoff_list."""
+        return self.handoff_list(status_filter=status_filter, include_completed=include_completed)
+
+    def handoff_list_completed(
+        self,
+        max_count: Optional[int] = None,
+        max_age_days: Optional[int] = None,
+    ) -> List[Handoff]:
+        """
+        List completed handoffs with hybrid visibility rules.
+
+        Uses OR logic: shows handoffs that are either:
+        - Within the last max_count completions, OR
+        - Completed within max_age_days
+
+        Args:
+            max_count: Max number of recent completions to show (default: HANDOFF_MAX_COMPLETED)
+            max_age_days: Max age in days for completed handoffs (default: HANDOFF_MAX_AGE_DAYS)
+
+        Returns:
+            List of visible completed handoffs, sorted by updated date (newest first)
+        """
+        if max_count is None:
+            max_count = HANDOFF_MAX_COMPLETED
+        if max_age_days is None:
+            max_age_days = HANDOFF_MAX_AGE_DAYS
+
+        if not self.project_handoffs_file.exists():
+            return []
+
+        handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+
+        # Filter to completed only
+        completed = [h for h in handoffs if h.status == "completed"]
+
+        if not completed:
+            return []
+
+        # Sort by updated date (newest first)
+        completed.sort(key=lambda h: h.updated, reverse=True)
+
+        # Calculate cutoff date
+        cutoff_date = date.today() - timedelta(days=max_age_days)
+
+        # Apply hybrid logic: keep if in top N OR recent enough
+        visible = []
+        for i, handoff in enumerate(completed):
+            # In top N by recency
+            in_top_n = i < max_count
+            # Updated within age limit
+            is_recent = handoff.updated >= cutoff_date
+
+            if in_top_n or is_recent:
+                visible.append(handoff)
+
+        return visible
+
+    # Backward compatibility alias
+    def approach_list_completed(
+        self,
+        max_count: Optional[int] = None,
+        max_age_days: Optional[int] = None,
+    ) -> List[Handoff]:
+        """Backward compatibility alias for handoff_list_completed."""
+        return self.handoff_list_completed(max_count=max_count, max_age_days=max_age_days)
+
+    def handoff_inject(
+        self,
+        max_completed: Optional[int] = None,
+        max_completed_age: Optional[int] = None,
+    ) -> str:
+        """
+        Generate context injection string with active and recent completed handoffs.
+
+        Args:
+            max_completed: Max completed handoffs to show (default: HANDOFF_MAX_COMPLETED)
+            max_completed_age: Max age in days for completed (default: HANDOFF_MAX_AGE_DAYS)
+
+        Returns:
+            Formatted string for context injection, empty if no handoffs
+        """
+        # Auto-archive stale and old completed handoffs before listing
+        self._archive_stale_handoffs()
+        self._archive_old_completed_handoffs()
+
+        active_handoffs = self.handoff_list(include_completed=False)
+        completed_handoffs = self.handoff_list_completed(
+            max_count=max_completed,
+            max_age_days=max_completed_age,
+        )
+
+        if not active_handoffs and not completed_handoffs:
+            return ""
+
+        lines = []
+
+        # Active handoffs section
+        if active_handoffs:
+            lines.append("## Active Handoffs")
+            lines.append("")
+
+            for handoff in active_handoffs:
+                lines.append(f"### [{handoff.id}] {handoff.title}")
+
+                # Check if work appears done (last tried step is completion pattern)
+                appears_done = False
+                if handoff.tried and handoff.status != "completed":
+                    last_desc = handoff.tried[-1].description.lower().strip()
+                    if any(last_desc.startswith(p) for p in self.COMPLETION_PATTERNS):
+                        appears_done = True
+
+                # Status with relative time
+                days_ago = (date.today() - handoff.updated).days
+                if days_ago == 0:
+                    time_str = "today"
+                elif days_ago == 1:
+                    time_str = "1d ago"
+                else:
+                    time_str = f"{days_ago}d ago"
+
+                status_str = handoff.status
+                if appears_done:
+                    status_str = f"{handoff.status} → completing"
+
+                lines.append(f"- **Status**: {status_str} | **Phase**: {handoff.phase} | **Last**: {time_str}")
+
+                # Compact files display (first 3 + count)
+                if handoff.files:
+                    if len(handoff.files) <= 3:
+                        files_str = ", ".join(handoff.files)
+                    else:
+                        files_str = ", ".join(handoff.files[:3]) + f" (+{len(handoff.files) - 3} more)"
+                    lines.append(f"- **Files**: {files_str}")
+
+                # Compact tried steps summary (not full list)
+                if handoff.tried:
+                    summary_lines = self._summarize_tried_steps(handoff.tried)
+                    lines.extend(summary_lines)
+
+                # Show checkpoint prominently if present (key for session handoff)
+                if handoff.checkpoint:
+                    lines.append(f"- **Checkpoint**: {handoff.checkpoint}")
+
+                # Appears done warning
+                if appears_done:
+                    lines.append(f"- ⚠️ **Appears done** - last step was \"{handoff.tried[-1].description[:30]}...\"")
+
+                if handoff.next_steps:
+                    lines.append(f"- **Next**: {handoff.next_steps}")
+
+                lines.append("")
+
+        # Recent completions section
+        if completed_handoffs:
+            lines.append("## Recent Completions")
+            lines.append("")
+
+            for handoff in completed_handoffs:
+                # Calculate days since completion
+                days_ago = (date.today() - handoff.updated).days
+                if days_ago == 0:
+                    time_str = "today"
+                elif days_ago == 1:
+                    time_str = "1d ago"
+                else:
+                    time_str = f"{days_ago}d ago"
+
+                lines.append(f"  [{handoff.id}] ✓ {handoff.title} (completed {time_str})")
+
+            lines.append("")
+
+        return "\n".join(lines)
+
+    # Backward compatibility alias
+    def approach_inject(
+        self,
+        max_completed: Optional[int] = None,
+        max_completed_age: Optional[int] = None,
+    ) -> str:
+        """Backward compatibility alias for handoff_inject."""
+        return self.handoff_inject(max_completed=max_completed, max_completed_age=max_completed_age)
+
+    def handoff_sync_todos(self, todos: List[dict]) -> Optional[str]:
+        """
+        Sync TodoWrite todos to a handoff.
+
+        Bridges ephemeral TodoWrite with persistent HANDOFFS.md:
+        - completed todos → tried entries (outcome=success)
+        - in_progress todo → checkpoint (current focus)
+        - pending todos → next_steps
+
+        Args:
+            todos: List of todo dicts with 'content', 'status', 'activeForm'
+
+        Returns:
+            Handoff ID that was updated/created, or None if no todos
+        """
+        if not todos:
+            return None
+
+        # Categorize todos by status
+        completed = [t for t in todos if t.get("status") == "completed"]
+        in_progress = [t for t in todos if t.get("status") == "in_progress"]
+        pending = [t for t in todos if t.get("status") == "pending"]
+
+        # Find or create a handoff
+        active_handoffs = self.handoff_list(include_completed=False)
+
+        if active_handoffs:
+            # Use the most recently updated active handoff
+            handoff = max(active_handoffs, key=lambda h: h.updated)
+            handoff_id = handoff.id
+        else:
+            # Create new handoff from first todo
+            first_todo = todos[0].get("content", "Work in progress")
+            # Truncate title to 50 chars
+            title = first_todo[:50] + ("..." if len(first_todo) > 50 else "")
+            handoff_id = self.handoff_add(title=title)
+
+        # Sync completed todos as tried entries (success)
+        # Only add new ones - check if description already exists
+        existing_tried = set()
+        handoff = self.handoff_get(handoff_id)
+        if handoff and handoff.tried:
+            existing_tried = {t.description for t in handoff.tried}
+
+        for todo in completed:
+            content = todo.get("content", "")
+            if content and content not in existing_tried:
+                self.handoff_add_tried(handoff_id, "success", content)
+
+        # Sync in_progress as checkpoint
+        if in_progress:
+            checkpoint_text = in_progress[0].get("content", "")
+            if len(in_progress) > 1:
+                checkpoint_text += f" (and {len(in_progress) - 1} more)"
+            self.handoff_update_checkpoint(handoff_id, checkpoint_text)
+
+        # Sync pending as next_steps
+        if pending:
+            next_items = [t.get("content", "") for t in pending[:5]]  # Max 5
+            next_text = "; ".join(next_items)
+            if len(pending) > 5:
+                next_text += f" (and {len(pending) - 5} more)"
+            self.handoff_update_next(handoff_id, next_text)
+
+        # Update status based on todo states
+        if in_progress:
+            self.handoff_update_status(handoff_id, "in_progress")
+        elif pending and not completed:
+            self.handoff_update_status(handoff_id, "not_started")
+
+        logger = get_logger()
+        logger.mutation("sync_todos", handoff_id, {
+            "completed": len(completed),
+            "in_progress": len(in_progress),
+            "pending": len(pending),
+        })
+
+        return handoff_id
+
+    # Backward compatibility alias
+    def approach_sync_todos(self, todos: List[dict]) -> Optional[str]:
+        """Backward compatibility alias for handoff_sync_todos."""
+        return self.handoff_sync_todos(todos)
+
+    def handoff_inject_todos(self) -> str:
+        """
+        Format active handoff as TodoWrite continuation prompt.
+
+        Generates a prompt that helps the agent continue work from a previous session
+        by showing the handoff state formatted as suggested todos.
+
+        Returns:
+            Formatted string with todo continuation prompt, or empty if no active handoff
+        """
+        import json as json_module
+
+        active_handoffs = self.handoff_list(include_completed=False)
+        if not active_handoffs:
+            return ""
+
+        # Use the most recently updated active handoff
+        handoff = max(active_handoffs, key=lambda h: h.updated)
+
+        # Build todo list from handoff state
+        todos = []
+        prefix = f"[{handoff.id}] "  # Prefix to identify handoff-tracked todos
+
+        # Add completed tried entries (already done)
+        for tried in handoff.tried:
+            if tried.outcome == "success":
+                todos.append({
+                    "content": prefix + tried.description,
+                    "status": "completed",
+                    "activeForm": tried.description[:50] + "..." if len(tried.description) > 50 else tried.description
+                })
+
+        # Add checkpoint as in_progress
+        if handoff.checkpoint:
+            todos.append({
+                "content": prefix + handoff.checkpoint,
+                "status": "in_progress",
+                "activeForm": handoff.checkpoint[:50] + "..." if len(handoff.checkpoint) > 50 else handoff.checkpoint
+            })
+
+        # Add next_steps as pending (split by semicolon)
+        if handoff.next_steps:
+            for step in handoff.next_steps.split(";"):
+                step = step.strip()
+                if step:
+                    todos.append({
+                        "content": prefix + step,
+                        "status": "pending",
+                        "activeForm": step[:50] + "..." if len(step) > 50 else step
+                    })
+
+        if not todos:
+            return ""
+
+        # Calculate session age
+        session_ago = ""
+        if handoff.last_session:
+            days = (date.today() - handoff.last_session).days
+            if days == 0:
+                session_ago = "today"
+            elif days == 1:
+                session_ago = "yesterday"
+            else:
+                session_ago = f"{days}d ago"
+
+        # Format as continuation prompt
+        lines = []
+        lines.append(f"**CONTINUE PREVIOUS WORK** ({handoff.id}: {handoff.title})")
+        if session_ago:
+            lines.append(f"Last session: {session_ago}")
+        lines.append("")
+        lines.append("Previous state:")
+        for todo in todos:
+            status_icon = {"completed": "✓", "in_progress": "→", "pending": "○"}.get(todo["status"], "?")
+            lines.append(f"  {status_icon} {todo['content']}")
+        lines.append("")
+        lines.append("**Use TodoWrite to resume tracking.** Copy this starting point:")
+        lines.append("```json")
+        # Only include non-completed todos in the suggested JSON
+        active_todos = [t for t in todos if t["status"] != "completed"]
+        lines.append(json_module.dumps(active_todos, indent=2))
+        lines.append("```")
+
+        return "\n".join(lines)
+
+    # Backward compatibility alias
+    def approach_inject_todos(self) -> str:
+        """Backward compatibility alias for handoff_inject_todos."""
+        return self.handoff_inject_todos()
+
+
+# Backward compatibility alias for the mixin class
+ApproachesMixin = HandoffsMixin

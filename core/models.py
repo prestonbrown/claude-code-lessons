@@ -26,11 +26,17 @@ ROBOT_EMOJI = "\U0001f916"  # Robot emoji for AI lessons
 VELOCITY_DECAY_FACTOR = 0.5  # 50% half-life per decay cycle
 VELOCITY_EPSILON = 0.01  # Below this, treat velocity as zero
 
-# Approach visibility constants
-APPROACH_MAX_COMPLETED = 3  # Keep last N completed approaches visible
-APPROACH_MAX_AGE_DAYS = 7  # Or completed within N days
-APPROACH_STALE_DAYS = 7  # Auto-archive active approaches untouched for N days
-APPROACH_COMPLETED_ARCHIVE_DAYS = 3  # Archive completed approaches after N days
+# Handoff visibility constants (renamed from Approach)
+HANDOFF_MAX_COMPLETED = 3  # Keep last N completed handoffs visible
+HANDOFF_MAX_AGE_DAYS = 7  # Or completed within N days
+HANDOFF_STALE_DAYS = 7  # Auto-archive active handoffs untouched for N days
+HANDOFF_COMPLETED_ARCHIVE_DAYS = 3  # Archive completed handoffs after N days
+
+# Backward compatibility aliases for constants
+APPROACH_MAX_COMPLETED = HANDOFF_MAX_COMPLETED
+APPROACH_MAX_AGE_DAYS = HANDOFF_MAX_AGE_DAYS
+APPROACH_STALE_DAYS = HANDOFF_STALE_DAYS
+APPROACH_COMPLETED_ARCHIVE_DAYS = HANDOFF_COMPLETED_ARCHIVE_DAYS
 
 # Relevance scoring constants
 SCORE_RELEVANCE_TIMEOUT = 30  # Default timeout for Haiku call
@@ -248,15 +254,19 @@ class DecayResult:
 
 
 @dataclass
-class TriedApproach:
-    """Represents a tried approach within an Approach."""
+class TriedStep:
+    """Represents a tried step within a Handoff."""
     outcome: str  # success|fail|partial
     description: str
 
 
+# Backward compatibility alias
+TriedApproach = TriedStep
+
+
 @dataclass
-class Approach:
-    """Represents an active approach being tracked."""
+class Handoff:
+    """Represents an active handoff being tracked (formerly called Approach)."""
     id: str
     title: str
     status: str  # not_started|in_progress|blocked|completed
@@ -267,16 +277,30 @@ class Approach:
     phase: str = "research"  # research|planning|implementing|review
     agent: str = "user"  # explore|general-purpose|plan|review|user
     files: List[str] = field(default_factory=list)
-    tried: List[TriedApproach] = field(default_factory=list)
+    tried: List[TriedStep] = field(default_factory=list)
     checkpoint: str = ""  # Progress summary from PreCompact hook
     last_session: Optional[date] = None  # When checkpoint was last updated
 
 
+# Backward compatibility alias
+Approach = Handoff
+
+
 @dataclass
-class ApproachCompleteResult:
-    """Result of completing an approach."""
-    approach: Approach
+class HandoffCompleteResult:
+    """Result of completing a handoff."""
+    handoff: Handoff
     extraction_prompt: str
+
+    # Backward compatibility property
+    @property
+    def approach(self) -> Handoff:
+        """Backward compatibility alias for handoff."""
+        return self.handoff
+
+
+# Backward compatibility alias
+ApproachCompleteResult = HandoffCompleteResult
 
 
 @dataclass
