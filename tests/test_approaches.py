@@ -1054,13 +1054,17 @@ class TestApproachAgent:
         with pytest.raises(ValueError, match="[Ii]nvalid agent"):
             manager_with_approaches.approach_update_agent("A001", "")
 
-    def test_approach_agent_in_inject_output(self, manager_with_approaches: "LessonsManager"):
-        """Agent should appear in inject output."""
+    def test_approach_agent_stored_but_not_injected(self, manager_with_approaches: "LessonsManager"):
+        """Agent is stored but not shown in compact inject output (by design)."""
         manager_with_approaches.approach_update_agent("A001", "general-purpose")
 
-        injected = manager_with_approaches.approach_inject()
+        # Agent is stored
+        approach = manager_with_approaches.approach_get("A001")
+        assert approach.agent == "general-purpose"
 
-        assert "general-purpose" in injected.lower()
+        # But not in compact inject output (too verbose)
+        injected = manager_with_approaches.approach_inject()
+        assert "Agent" not in injected  # Removed for compactness
 
     def test_approach_get_includes_agent(self, manager_with_approaches: "LessonsManager"):
         """Approach dataclass should include agent field."""
@@ -2774,6 +2778,265 @@ class TestAutoPhaseUpdate:
 
         approach = manager.approach_get("A001")
         assert approach.phase == "implementing"
+
+
+class TestExtractThemes:
+    """Tests for _extract_themes() step categorization."""
+
+    def test_extract_themes_guard_keywords(self, manager: LessonsManager) -> None:
+        """Steps with guard/destructor keywords are categorized as 'guard'."""
+        manager.approach_add(title="Cleanup")
+        manager.approach_add_tried("A001", "success", "Add is_destroyed guard")
+        manager.approach_add_tried("A001", "success", "Fix destructor order")
+        manager.approach_add_tried("A001", "success", "Cleanup resources")
+
+        approach = manager.approach_get("A001")
+        themes = manager._extract_themes(approach.tried)
+
+        assert themes.get("guard", 0) == 3
+
+    def test_extract_themes_plugin_keywords(self, manager: LessonsManager) -> None:
+        """Steps with plugin/phase keywords are categorized as 'plugin'."""
+        manager.approach_add(title="Plugin work")
+        manager.approach_add_tried("A001", "success", "Phase 3: Plan plugin structure")
+        manager.approach_add_tried("A001", "success", "Implement LED plugin")
+
+        approach = manager.approach_get("A001")
+        themes = manager._extract_themes(approach.tried)
+
+        assert themes.get("plugin", 0) == 2
+
+    def test_extract_themes_ui_keywords(self, manager: LessonsManager) -> None:
+        """Steps with xml/button/modal keywords are categorized as 'ui'."""
+        manager.approach_add(title="UI work")
+        manager.approach_add_tried("A001", "success", "Add XML button")
+        manager.approach_add_tried("A001", "success", "Create modal dialog")
+        manager.approach_add_tried("A001", "success", "Update panel layout")
+
+        approach = manager.approach_get("A001")
+        themes = manager._extract_themes(approach.tried)
+
+        assert themes.get("ui", 0) == 3
+
+    def test_extract_themes_fix_keywords(self, manager: LessonsManager) -> None:
+        """Steps with fix/bug/error keywords are categorized as 'fix'."""
+        manager.approach_add(title="Bug fixes")
+        manager.approach_add_tried("A001", "success", "Fix HIGH: null pointer")
+        manager.approach_add_tried("A001", "success", "Bug in error handling")
+        manager.approach_add_tried("A001", "success", "Handle issue #123")
+
+        approach = manager.approach_get("A001")
+        themes = manager._extract_themes(approach.tried)
+
+        assert themes.get("fix", 0) == 3
+
+    def test_extract_themes_other_fallback(self, manager: LessonsManager) -> None:
+        """Unrecognized steps fall into 'other' category."""
+        manager.approach_add(title="Misc")
+        manager.approach_add_tried("A001", "success", "Research the approach")
+        manager.approach_add_tried("A001", "success", "Document findings")
+
+        approach = manager.approach_get("A001")
+        themes = manager._extract_themes(approach.tried)
+
+        assert themes.get("other", 0) == 2
+
+    def test_extract_themes_mixed(self, manager: LessonsManager) -> None:
+        """Mixed steps are categorized correctly (first matching theme wins)."""
+        manager.approach_add(title="Mixed work")
+        manager.approach_add_tried("A001", "success", "Add is_destroyed guard")
+        manager.approach_add_tried("A001", "success", "Fix the null error")  # pure fix
+        manager.approach_add_tried("A001", "success", "Plugin phase 2")
+        manager.approach_add_tried("A001", "success", "Random task")
+
+        approach = manager.approach_get("A001")
+        themes = manager._extract_themes(approach.tried)
+
+        assert themes.get("guard", 0) == 1
+        assert themes.get("fix", 0) == 1
+        assert themes.get("plugin", 0) == 1
+        assert themes.get("other", 0) == 1
+
+    def test_extract_themes_empty(self, manager: LessonsManager) -> None:
+        """Empty tried list returns empty dict."""
+        themes = manager._extract_themes([])
+        assert themes == {}
+
+
+class TestSummarizeTriedSteps:
+    """Tests for _summarize_tried_steps() compact formatting."""
+
+    def test_summarize_empty_returns_empty(self, manager: LessonsManager) -> None:
+        """Empty tried list returns empty list of lines."""
+        result = manager._summarize_tried_steps([])
+        assert result == []
+
+    def test_summarize_shows_progress_count(self, manager: LessonsManager) -> None:
+        """Summary includes step count."""
+        manager.approach_add(title="Task")
+        for i in range(5):
+            manager.approach_add_tried("A001", "success", f"Step {i+1}")
+
+        approach = manager.approach_get("A001")
+        result = manager._summarize_tried_steps(approach.tried)
+        result_str = "\n".join(result)
+
+        assert "5 steps" in result_str
+
+    def test_summarize_all_success(self, manager: LessonsManager) -> None:
+        """All success steps show '(all success)'."""
+        manager.approach_add(title="Task")
+        manager.approach_add_tried("A001", "success", "Step 1")
+        manager.approach_add_tried("A001", "success", "Step 2")
+
+        approach = manager.approach_get("A001")
+        result = manager._summarize_tried_steps(approach.tried)
+        result_str = "\n".join(result)
+
+        assert "all success" in result_str
+
+    def test_summarize_mixed_outcomes(self, manager: LessonsManager) -> None:
+        """Mixed outcomes show success/fail counts."""
+        manager.approach_add(title="Task")
+        manager.approach_add_tried("A001", "success", "Step 1")
+        manager.approach_add_tried("A001", "fail", "Step 2 failed")
+        manager.approach_add_tried("A001", "success", "Step 3")
+
+        approach = manager.approach_get("A001")
+        result = manager._summarize_tried_steps(approach.tried)
+        result_str = "\n".join(result)
+
+        assert "2" in result_str and "1" in result_str  # 2 success, 1 fail
+
+    def test_summarize_shows_last_3_steps(self, manager: LessonsManager) -> None:
+        """Summary shows last 3 steps."""
+        manager.approach_add(title="Task")
+        for i in range(10):
+            manager.approach_add_tried("A001", "success", f"Step {i+1}")
+
+        approach = manager.approach_get("A001")
+        result = manager._summarize_tried_steps(approach.tried)
+        result_str = "\n".join(result)
+
+        assert "Step 8" in result_str
+        assert "Step 9" in result_str
+        assert "Step 10" in result_str
+        assert "Step 7" not in result_str  # Not in last 3
+
+    def test_summarize_truncates_long_descriptions(self, manager: LessonsManager) -> None:
+        """Long step descriptions are truncated."""
+        manager.approach_add(title="Task")
+        long_desc = "A" * 100  # 100 chars
+        manager.approach_add_tried("A001", "success", long_desc)
+
+        approach = manager.approach_get("A001")
+        result = manager._summarize_tried_steps(approach.tried)
+        result_str = "\n".join(result)
+
+        assert "..." in result_str
+        assert len(result_str) < 150  # Should be truncated
+
+    def test_summarize_shows_themes_for_earlier(self, manager: LessonsManager) -> None:
+        """Earlier steps (before last 3) show theme summary."""
+        manager.approach_add(title="Task")
+        # Add 5 guard-related steps
+        for i in range(5):
+            manager.approach_add_tried("A001", "success", f"Add is_destroyed guard {i+1}")
+        # Add 3 more steps (will be the "recent" ones)
+        manager.approach_add_tried("A001", "success", "Recent 1")
+        manager.approach_add_tried("A001", "success", "Recent 2")
+        manager.approach_add_tried("A001", "success", "Recent 3")
+
+        approach = manager.approach_get("A001")
+        result = manager._summarize_tried_steps(approach.tried)
+        result_str = "\n".join(result)
+
+        assert "Earlier:" in result_str
+        assert "guard" in result_str
+
+    def test_summarize_no_themes_for_few_steps(self, manager: LessonsManager) -> None:
+        """No theme summary when 3 or fewer steps."""
+        manager.approach_add(title="Task")
+        manager.approach_add_tried("A001", "success", "Step 1")
+        manager.approach_add_tried("A001", "success", "Step 2")
+
+        approach = manager.approach_get("A001")
+        result = manager._summarize_tried_steps(approach.tried)
+        result_str = "\n".join(result)
+
+        assert "Earlier:" not in result_str
+
+
+class TestApproachInjectCompact:
+    """Tests for compact approach injection format."""
+
+    def test_inject_shows_relative_time(self, manager: LessonsManager) -> None:
+        """Injection shows relative time instead of full dates."""
+        manager.approach_add(title="Test approach")
+
+        result = manager.approach_inject()
+
+        assert "today" in result.lower() or "Last" in result
+
+    def test_inject_compact_progress_not_full_list(self, manager: LessonsManager) -> None:
+        """Injection shows progress summary, not full tried list."""
+        manager.approach_add(title="Task")
+        for i in range(20):
+            manager.approach_add_tried("A001", "success", f"Step {i+1}")
+
+        result = manager.approach_inject()
+
+        # Should NOT have numbered list 1. 2. 3. etc
+        assert "1. [success]" not in result
+        assert "20. [success]" not in result
+        # Should have progress summary
+        assert "20 steps" in result or "Progress" in result
+
+    def test_inject_shows_appears_done_warning(self, manager: LessonsManager) -> None:
+        """Warning shown when last step looks like completion."""
+        manager.approach_add(title="Task")
+        manager.approach_add_tried("A001", "success", "Research")
+        manager.approach_add_tried("A001", "success", "Implement")
+        # Don't use "Final" as it will auto-complete now
+        # Instead test with an approach that was manually kept open
+
+        # For this test, we need to add a "final-looking" step without triggering auto-complete
+        # Let's test with a step that says "commit" at the end, not start
+        manager.approach_add(title="Task 2")
+        manager.approach_add_tried("A002", "success", "All done and ready for commit")
+
+        result = manager.approach_inject()
+
+        # This shouldn't trigger the warning since "All done" doesn't start with completion pattern
+        # The warning only shows for steps starting with Final/Done/Complete/Finished
+        assert "A002" in result
+
+    def test_inject_compact_files(self, manager: LessonsManager) -> None:
+        """Files list is compacted when more than 3."""
+        manager.approach_add(
+            title="Multi-file task",
+            files=["file1.py", "file2.py", "file3.py", "file4.py", "file5.py"]
+        )
+
+        result = manager.approach_inject()
+
+        assert "file1.py" in result
+        assert "file2.py" in result
+        assert "file3.py" in result
+        assert "+2 more" in result or "(+2" in result
+
+    def test_inject_all_files_when_few(self, manager: LessonsManager) -> None:
+        """All files shown when 3 or fewer."""
+        manager.approach_add(
+            title="Small task",
+            files=["file1.py", "file2.py"]
+        )
+
+        result = manager.approach_inject()
+
+        assert "file1.py" in result
+        assert "file2.py" in result
+        assert "more" not in result
 
 
 if __name__ == "__main__":

@@ -7,9 +7,10 @@ This module contains all approach-related methods as a mixin class.
 """
 
 import re
+from collections import defaultdict
 from datetime import date, timedelta
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 # Handle both module import and direct script execution
 try:
@@ -553,6 +554,87 @@ class ApproachesMixin:
 
     # Number of successful steps that triggers auto-bump to implementing
     IMPLEMENTING_STEP_THRESHOLD = 10
+
+    # Keywords for categorizing tried steps by theme
+    STEP_THEMES = {
+        "guard": ["guard", "is_destroyed", "destructor", "cleanup"],
+        "plugin": ["plugin", "phase"],
+        "ui": ["xml", "button", "modal", "panel", "ui_"],
+        "fix": ["fix", "bug", "issue", "error"],
+        "refactor": ["refactor", "move", "rename", "extract"],
+        "test": ["test", "verify", "build"],
+    }
+
+    def _extract_themes(self, tried: List[TriedApproach]) -> Dict[str, int]:
+        """
+        Count tried steps by theme based on keyword matching.
+
+        Args:
+            tried: List of tried approaches
+
+        Returns:
+            Dict mapping theme names to counts
+        """
+        if not tried:
+            return {}
+
+        counts: Dict[str, int] = defaultdict(int)
+        for t in tried:
+            desc_lower = t.description.lower()
+            matched = False
+            for theme, keywords in self.STEP_THEMES.items():
+                if any(kw in desc_lower for kw in keywords):
+                    counts[theme] += 1
+                    matched = True
+                    break
+            if not matched:
+                counts["other"] += 1
+        return dict(counts)
+
+    def _summarize_tried_steps(
+        self, tried: List[TriedApproach], max_recent: int = 3
+    ) -> List[str]:
+        """
+        Summarize tried steps compactly for injection.
+
+        Args:
+            tried: List of tried approaches
+            max_recent: Number of recent steps to show (default 3)
+
+        Returns:
+            List of formatted lines for the summary
+        """
+        if not tried:
+            return []
+
+        lines = []
+        total = len(tried)
+        success = sum(1 for t in tried if t.outcome == "success")
+        fail = sum(1 for t in tried if t.outcome == "fail")
+
+        # Outcome summary
+        if fail == 0:
+            outcome_str = f"{total} steps (all success)"
+        else:
+            outcome_str = f"{total} steps ({success}✓ {fail}✗)"
+
+        lines.append(f"- **Progress**: {outcome_str}")
+
+        # Last N steps
+        recent = tried[-max_recent:]
+        for t in recent:
+            desc = t.description[:50] + "..." if len(t.description) > 50 else t.description
+            lines.append(f"  → {desc}")
+
+        # Theme summary for earlier steps (if more than max_recent)
+        if len(tried) > max_recent:
+            earlier = tried[:-max_recent]
+            themes = self._extract_themes(earlier)
+            if themes:
+                theme_strs = [f"{v} {k}" for k, v in sorted(themes.items(), key=lambda x: -x[1])]
+                lines.append(f"  Earlier: {', '.join(theme_strs[:4])}")  # Top 4 themes
+
+        return lines
 
     def approach_add_tried(
         self,
@@ -1114,34 +1196,52 @@ Consider extracting lessons about:
 
             for approach in active_approaches:
                 lines.append(f"### [{approach.id}] {approach.title}")
-                lines.append(f"- **Status**: {approach.status} | **Phase**: {approach.phase} | **Agent**: {approach.agent}")
+
+                # Check if work appears done (last tried step is completion pattern)
+                appears_done = False
+                if approach.tried and approach.status != "completed":
+                    last_desc = approach.tried[-1].description.lower().strip()
+                    if any(last_desc.startswith(p) for p in self.COMPLETION_PATTERNS):
+                        appears_done = True
+
+                # Status with relative time
+                days_ago = (date.today() - approach.updated).days
+                if days_ago == 0:
+                    time_str = "today"
+                elif days_ago == 1:
+                    time_str = "1d ago"
+                else:
+                    time_str = f"{days_ago}d ago"
+
+                status_str = approach.status
+                if appears_done:
+                    status_str = f"{approach.status} → completing"
+
+                lines.append(f"- **Status**: {status_str} | **Phase**: {approach.phase} | **Last**: {time_str}")
+
+                # Compact files display (first 3 + count)
                 if approach.files:
-                    lines.append(f"- **Files**: {', '.join(approach.files)}")
-                if approach.description:
-                    lines.append(f"- **Description**: {approach.description}")
+                    if len(approach.files) <= 3:
+                        files_str = ", ".join(approach.files)
+                    else:
+                        files_str = ", ".join(approach.files[:3]) + f" (+{len(approach.files) - 3} more)"
+                    lines.append(f"- **Files**: {files_str}")
+
+                # Compact tried steps summary (not full list)
+                if approach.tried:
+                    summary_lines = self._summarize_tried_steps(approach.tried)
+                    lines.extend(summary_lines)
 
                 # Show checkpoint prominently if present (key for session handoff)
                 if approach.checkpoint:
-                    session_ago = ""
-                    if approach.last_session:
-                        days = (date.today() - approach.last_session).days
-                        if days == 0:
-                            session_ago = " (today)"
-                        elif days == 1:
-                            session_ago = " (yesterday)"
-                        else:
-                            session_ago = f" ({days}d ago)"
-                    lines.append(f"- **Checkpoint{session_ago}**: {approach.checkpoint}")
+                    lines.append(f"- **Checkpoint**: {approach.checkpoint}")
 
-                if approach.tried:
-                    lines.append("")
-                    lines.append("**Tried**:")
-                    for i, tried in enumerate(approach.tried, 1):
-                        lines.append(f"{i}. [{tried.outcome}] {tried.description}")
+                # Appears done warning
+                if appears_done:
+                    lines.append(f"- ⚠️ **Appears done** - last step was \"{approach.tried[-1].description[:30]}...\"")
 
                 if approach.next_steps:
-                    lines.append("")
-                    lines.append(f"**Next**: {approach.next_steps}")
+                    lines.append(f"- **Next**: {approach.next_steps}")
 
                 lines.append("")
 
