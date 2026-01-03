@@ -1770,13 +1770,17 @@ class TestStopHookLastReference:
     """Tests for stop-hook.sh LAST reference in approach commands."""
 
     @pytest.fixture
-    def temp_dirs(self, tmp_path: Path):
+    def temp_dirs(self, tmp_path: Path, monkeypatch):
         """Create temp directories for testing."""
         lessons_base = tmp_path / ".config" / "claude-recall"
+        state_dir = tmp_path / ".local" / "state" / "claude-recall"
         project_root = tmp_path / "project"
         lessons_base.mkdir(parents=True)
+        state_dir.mkdir(parents=True)
         project_root.mkdir(parents=True)
-        return lessons_base, project_root
+        # Set env var so LessonsManager uses temp state dir
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(state_dir))
+        return lessons_base, state_dir, project_root
 
     def create_mock_transcript(self, project_root: Path, messages: list) -> Path:
         """Create a mock transcript file with the given assistant messages."""
@@ -1798,7 +1802,7 @@ class TestStopHookLastReference:
 
     def test_last_reference_phase_update(self, temp_dirs):
         """APPROACH UPDATE LAST: phase should update the most recent approach."""
-        lessons_base, project_root = temp_dirs
+        lessons_base, state_dir, project_root = temp_dirs
         hook_path = Path("adapters/claude-code/stop-hook.sh")
         if not hook_path.exists():
             pytest.skip("stop-hook.sh not found")
@@ -1822,6 +1826,7 @@ class TestStopHookLastReference:
             env={
                 **os.environ,
                 "CLAUDE_RECALL_BASE": str(lessons_base),
+                "CLAUDE_RECALL_STATE": str(state_dir),
                 "PROJECT_DIR": str(project_root),
             },
         )
@@ -1838,7 +1843,7 @@ class TestStopHookLastReference:
 
     def test_last_reference_tried_update(self, temp_dirs):
         """APPROACH UPDATE LAST: tried should update the most recent approach."""
-        lessons_base, project_root = temp_dirs
+        lessons_base, state_dir, project_root = temp_dirs
         hook_path = Path("adapters/claude-code/stop-hook.sh")
         if not hook_path.exists():
             pytest.skip("stop-hook.sh not found")
@@ -1862,6 +1867,7 @@ class TestStopHookLastReference:
             env={
                 **os.environ,
                 "CLAUDE_RECALL_BASE": str(lessons_base),
+                "CLAUDE_RECALL_STATE": str(state_dir),
                 "PROJECT_DIR": str(project_root),
             },
         )
@@ -1880,7 +1886,7 @@ class TestStopHookLastReference:
 
     def test_last_reference_complete(self, temp_dirs):
         """APPROACH COMPLETE LAST should complete the most recent approach."""
-        lessons_base, project_root = temp_dirs
+        lessons_base, state_dir, project_root = temp_dirs
         hook_path = Path("adapters/claude-code/stop-hook.sh")
         if not hook_path.exists():
             pytest.skip("stop-hook.sh not found")
@@ -1904,6 +1910,7 @@ class TestStopHookLastReference:
             env={
                 **os.environ,
                 "CLAUDE_RECALL_BASE": str(lessons_base),
+                "CLAUDE_RECALL_STATE": str(state_dir),
                 "PROJECT_DIR": str(project_root),
             },
         )
@@ -1921,7 +1928,7 @@ class TestStopHookLastReference:
 
     def test_last_tracks_across_multiple_creates(self, temp_dirs):
         """LAST should track the most recently created approach."""
-        lessons_base, project_root = temp_dirs
+        lessons_base, state_dir, project_root = temp_dirs
         hook_path = Path("adapters/claude-code/stop-hook.sh")
         if not hook_path.exists():
             pytest.skip("stop-hook.sh not found")
@@ -1946,6 +1953,7 @@ class TestStopHookLastReference:
             env={
                 **os.environ,
                 "CLAUDE_RECALL_BASE": str(lessons_base),
+                "CLAUDE_RECALL_STATE": str(state_dir),
                 "PROJECT_DIR": str(project_root),
             },
         )

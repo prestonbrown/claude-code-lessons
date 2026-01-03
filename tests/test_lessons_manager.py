@@ -57,6 +57,14 @@ def temp_lessons_base(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def temp_state_dir(tmp_path: Path) -> Path:
+    """Create a temporary state directory for system lessons and state files."""
+    state_dir = tmp_path / ".local" / "state" / "claude-recall"
+    state_dir.mkdir(parents=True)
+    return state_dir
+
+
+@pytest.fixture
 def temp_project_root(tmp_path: Path) -> Path:
     """Create a temporary project directory with .git folder."""
     project = tmp_path / "project"
@@ -66,8 +74,10 @@ def temp_project_root(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def manager(temp_lessons_base: Path, temp_project_root: Path) -> "LessonsManager":
+def manager(temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch) -> "LessonsManager":
     """Create a LessonsManager instance with temporary paths."""
+    # Set CLAUDE_RECALL_STATE so _get_state_dir() uses temp directory
+    monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
     return LessonsManager(
         lessons_base=temp_lessons_base,
         project_root=temp_project_root,
@@ -1156,10 +1166,11 @@ class TestCLI:
         assert "L001" in result.stdout
         assert "Test Lesson" in result.stdout
 
-    def test_cli_list_project_flag(self, temp_lessons_base: Path, temp_project_root: Path):
+    def test_cli_list_project_flag(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
         """CLI list --project should only show project lessons."""
         from core import LessonsManager
 
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson(
             level="project", category="pattern",
@@ -1177,6 +1188,7 @@ class TestCLI:
             env={
                 **os.environ,
                 "CLAUDE_RECALL_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_STATE": str(temp_state_dir),
                 "PROJECT_DIR": str(temp_project_root),
             },
         )
@@ -1185,10 +1197,11 @@ class TestCLI:
         assert "L001" in result.stdout
         assert "S001" not in result.stdout
 
-    def test_cli_list_system_flag(self, temp_lessons_base: Path, temp_project_root: Path):
+    def test_cli_list_system_flag(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
         """CLI list --system should only show system lessons."""
         from core import LessonsManager
 
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson(
             level="project", category="pattern",
@@ -1206,6 +1219,7 @@ class TestCLI:
             env={
                 **os.environ,
                 "CLAUDE_RECALL_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_STATE": str(temp_state_dir),
                 "PROJECT_DIR": str(temp_project_root),
             },
         )
@@ -1386,7 +1400,7 @@ class TestCaptureHook:
 class TestHookPathResolution:
     """Tests for hook Python manager path resolution."""
 
-    def test_hook_uses_installed_path_when_available(self, temp_lessons_base: Path, temp_project_root: Path):
+    def test_hook_uses_installed_path_when_available(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
         """Hooks should use $CLAUDE_RECALL_BASE/cli.py when it exists (installed mode)."""
         import shutil
         from core import LessonsManager
@@ -1403,6 +1417,7 @@ class TestHookPathResolution:
             "lessons.py",
             "handoffs.py",  # Renamed from approaches.py
             "__init__.py",
+            "_version.py",
         ]
 
         if not (core_dir / "cli.py").exists():
@@ -1414,6 +1429,7 @@ class TestHookPathResolution:
                 shutil.copy(src, temp_lessons_base / module)
 
         # Create a lesson using the manager (ensures proper format)
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson(
             level="system",
@@ -1437,6 +1453,7 @@ class TestHookPathResolution:
             env={
                 **os.environ,
                 "CLAUDE_RECALL_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_STATE": str(temp_state_dir),
                 "PROJECT_DIR": str(temp_project_root),
             },
         )
@@ -1445,7 +1462,7 @@ class TestHookPathResolution:
         assert result.returncode == 0
         assert "LESSONS ACTIVE" in result.stdout or "S001" in result.stdout
 
-    def test_hook_falls_back_to_dev_path(self, temp_lessons_base: Path, temp_project_root: Path):
+    def test_hook_falls_back_to_dev_path(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
         """Hooks should fall back to dev path when installed path doesn't exist."""
         from core import LessonsManager
 
@@ -1455,6 +1472,7 @@ class TestHookPathResolution:
             pytest.skip("inject-hook.sh not found")
 
         # Create a lesson using the manager (ensures proper format)
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson(
             level="system",
@@ -1471,6 +1489,7 @@ class TestHookPathResolution:
             env={
                 **os.environ,
                 "CLAUDE_RECALL_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_STATE": str(temp_state_dir),
                 "PROJECT_DIR": str(temp_project_root),
             },
         )
@@ -1719,10 +1738,11 @@ class TestScoreRelevance:
         scores = [sl.score for sl in result.scored_lessons]
         assert scores == [9, 5, 3]  # Sorted descending
 
-    def test_score_relevance_empty_lessons(self, temp_lessons_base: Path, temp_project_root: Path):
+    def test_score_relevance_empty_lessons(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
         """score_relevance with no lessons returns empty result."""
         from core import LessonsManager
 
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         result = manager.score_relevance("test query")
         assert result.scored_lessons == []
@@ -1896,10 +1916,11 @@ class TestScoreRelevance:
         assert result.scored_lessons[0].lesson.id == "L002"
         assert result.scored_lessons[1].lesson.id == "L001"
 
-    def test_score_relevance_system_lessons(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
+    def test_score_relevance_system_lessons(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
         """Both project (L###) and system (S###) lessons are scored."""
         from core import LessonsManager
 
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Project lesson", "Project content")
         manager.add_lesson("system", "pattern", "System lesson", "System content")

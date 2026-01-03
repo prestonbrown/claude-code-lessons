@@ -195,8 +195,10 @@ install_core() {
         log_success "Installed OpenCode reminder plugin"
     fi
 
-    if [[ ! -f "$CLAUDE_RECALL_BASE/LESSONS.md" ]]; then
-        cat > "$CLAUDE_RECALL_BASE/LESSONS.md" << 'EOF'
+    # Note: System lessons file is now created in CLAUDE_RECALL_STATE on first use
+    # by the Python manager, following XDG conventions
+    if [[ ! -f "$CLAUDE_RECALL_STATE/LESSONS.md" ]]; then
+        cat > "$CLAUDE_RECALL_STATE/LESSONS.md" << 'EOF'
 # LESSONS.md - System Level
 
 > **Claude Recall**: Cite lessons with [S###] when applying them.
@@ -208,7 +210,7 @@ install_core() {
 ## Active Lessons
 
 EOF
-        log_success "Created system lessons file"
+        log_success "Created system lessons file in state directory"
     fi
 }
 
@@ -290,7 +292,7 @@ EOF
 A tiered cache that tracks corrections/patterns across sessions.
 
 - **Project lessons** (`[L###]`): `.claude-recall/LESSONS.md`
-- **System lessons** (`[S###]`): `~/.config/claude-recall/LESSONS.md`
+- **System lessons** (`[S###]`): `~/.local/state/claude-recall/LESSONS.md`
 
 **Commands**: `LESSON: title - content` or `SYSTEM LESSON: title - content`
 **Cite**: Reference `[L001]` when applying lessons.
@@ -351,7 +353,7 @@ install_opencode() {
 A tiered learning cache that tracks corrections/patterns across sessions.
 
 - **Project lessons** (`[L###]`): `.claude-recall/LESSONS.md`
-- **System lessons** (`[S###]`): `~/.config/claude-recall/LESSONS.md`
+- **System lessons** (`[S###]`): `~/.local/state/claude-recall/LESSONS.md`
 
 **Add**: Type `LESSON: title - content` or `SYSTEM LESSON: title - content`
 **Cite**: Reference `[L001]` when applying lessons (stars increase with use)
@@ -535,13 +537,14 @@ main() {
             echo "  Old locations (will be migrated):"
             echo "    ~/.config/coding-agent-lessons/"
             echo "    ~/.config/recall/"
+            echo "    ~/.config/claude-recall/LESSONS.md"
             echo "    ~/.claude/LESSONS.md"
             echo "    .coding-agent-lessons/"
             echo "    .recall/"
             echo ""
             echo "  New locations:"
-            echo "    ~/.config/claude-recall/LESSONS.md"
-            echo "    .claude-recall/LESSONS.md"
+            echo "    ~/.local/state/claude-recall/LESSONS.md (system)"
+            echo "    .claude-recall/LESSONS.md (project, gitignored)"
             exit 0
             ;;
         *)
@@ -572,10 +575,11 @@ main() {
     echo ""
     log_success "Installation complete!"
     echo ""
-    echo "Claude Recall installed to: $CLAUDE_RECALL_BASE/"
-    echo "  - System lessons: $CLAUDE_RECALL_BASE/LESSONS.md"
-    echo "  - Project lessons: .claude-recall/LESSONS.md (per-project)"
-    echo "  - Debug logs: $CLAUDE_RECALL_STATE/debug.log (XDG state)"
+    echo "Claude Recall installed:"
+    echo "  - Code: $CLAUDE_RECALL_BASE/"
+    echo "  - System lessons: $CLAUDE_RECALL_STATE/LESSONS.md (XDG state)"
+    echo "  - Project lessons: .claude-recall/LESSONS.md (per-project, gitignored)"
+    echo "  - Debug logs: $CLAUDE_RECALL_STATE/debug.log"
     echo ""
     echo "Features:"
     echo "  - Lessons shown at session start"

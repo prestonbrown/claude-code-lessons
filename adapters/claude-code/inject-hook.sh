@@ -9,10 +9,12 @@ set -euo pipefail
 
 # Support new (CLAUDE_RECALL_*), transitional (RECALL_*), and legacy (LESSONS_*) env vars
 CLAUDE_RECALL_BASE="${CLAUDE_RECALL_BASE:-${RECALL_BASE:-${LESSONS_BASE:-$HOME/.config/claude-recall}}}"
+CLAUDE_RECALL_STATE="${CLAUDE_RECALL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-recall}"
 CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-${RECALL_DEBUG:-${LESSONS_DEBUG:-}}}"
 # Export legacy names for downstream compatibility
 LESSONS_BASE="$CLAUDE_RECALL_BASE"
 LESSONS_DEBUG="$CLAUDE_RECALL_DEBUG"
+export CLAUDE_RECALL_STATE
 BASH_MANAGER="$CLAUDE_RECALL_BASE/lessons-manager.sh"
 # Python manager - try installed location first, fall back to dev location
 if [[ -f "$CLAUDE_RECALL_BASE/cli.py" ]]; then
@@ -34,7 +36,7 @@ is_enabled() {
 
 # Run decay if it's been more than DECAY_INTERVAL since last run
 run_decay_if_due() {
-    local decay_state="$CLAUDE_RECALL_BASE/.decay-last-run"
+    local decay_state="$CLAUDE_RECALL_STATE/.decay-last-run"
     local now=$(date +%s)
     local last_run=0
 
@@ -48,7 +50,7 @@ run_decay_if_due() {
         # Run decay in background so it doesn't slow down session start
         # Try Python first, fall back to bash
         if [[ -f "$PYTHON_MANAGER" ]]; then
-            PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" python3 "$PYTHON_MANAGER" decay 30 >/dev/null 2>&1 &
+            PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" python3 "$PYTHON_MANAGER" decay 30 >/dev/null 2>&1 &
         elif [[ -x "$BASH_MANAGER" ]]; then
             "$BASH_MANAGER" decay 30 >/dev/null 2>&1 &
         fi
@@ -63,12 +65,12 @@ generate_context() {
 
     # Try Python manager first
     if [[ -f "$PYTHON_MANAGER" ]]; then
-        summary=$(PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" python3 "$PYTHON_MANAGER" inject 3 2>/dev/null || true)
+        summary=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" python3 "$PYTHON_MANAGER" inject 3 2>/dev/null || true)
     fi
 
     # Fall back to bash manager if Python fails or returns empty
     if [[ -z "$summary" && -x "$BASH_MANAGER" ]]; then
-        summary=$(PROJECT_DIR="$cwd" LESSONS_DEBUG="${LESSONS_DEBUG:-}" "$BASH_MANAGER" inject 3 2>/dev/null || true)
+        summary=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" "$BASH_MANAGER" inject 3 2>/dev/null || true)
     fi
 
     echo "$summary"
@@ -87,12 +89,12 @@ main() {
     local handoffs=""
     local todo_continuation=""
     if [[ -f "$PYTHON_MANAGER" ]]; then
-        handoffs=$(PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" python3 "$PYTHON_MANAGER" handoff inject 2>/dev/null || true)
+        handoffs=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" python3 "$PYTHON_MANAGER" handoff inject 2>/dev/null || true)
 
         # Generate todo continuation prompt if there are active handoffs
         if [[ -n "$handoffs" && "$handoffs" != "(no active handoffs)" ]]; then
             # Extract the most recent handoff for todo format
-            todo_continuation=$(PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" python3 "$PYTHON_MANAGER" handoff inject-todos 2>/dev/null || true)
+            todo_continuation=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" python3 "$PYTHON_MANAGER" handoff inject-todos 2>/dev/null || true)
         fi
     fi
     if [[ -n "$handoffs" && "$handoffs" != "(no active handoffs)" ]]; then

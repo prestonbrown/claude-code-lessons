@@ -9,9 +9,10 @@ A learning system for AI coding agents that captures lessons across sessions and
 | Core Python | `core/cli.py` (entry), `core/lessons.py`, `core/handoffs.py`, `core/debug_logger.py` |
 | Claude hooks | `adapters/claude-code/inject-hook.sh`, `smart-inject-hook.sh`, `stop-hook.sh` |
 | Tests | `tests/test_lessons_manager.py`, `tests/test_handoffs.py` |
-| Project lessons | `.claude-recall/LESSONS.md` (or legacy `.coding-agent-lessons/LESSONS.md`) |
-| System lessons | `~/.config/claude-recall/LESSONS.md` |
-| Handoffs | `.claude-recall/HANDOFFS.md` (or legacy `.coding-agent-lessons/APPROACHES.md`) |
+| Project lessons | `.claude-recall/LESSONS.md` (gitignored by default) |
+| System lessons | `~/.local/state/claude-recall/LESSONS.md` (XDG state) |
+| Handoffs | `.claude-recall/HANDOFFS.md` |
+| State files | `~/.local/state/claude-recall/` (decay, citation state, logs) |
 
 ## How It Works
 
@@ -44,23 +45,23 @@ python3 core/cli.py handoff list                      # or 'approach list' (alia
 
 **Read `docs/TESTING.md` before writing tests.** Key gotchas:
 
-- Use `temp_lessons_base` + `temp_project_root` fixtures for CLI tests
+- Use `temp_lessons_base` + `temp_state_dir` + `temp_project_root` fixtures for CLI tests
 - `add_lesson()` requires **keyword args**: `level=`, `category=`, `title=`, `content=`
-- CLI subprocess tests need `env={**os.environ, "CLAUDE_RECALL_BASE": ..., "PROJECT_DIR": ...}`
+- CLI subprocess tests need `env={**os.environ, "CLAUDE_RECALL_BASE": ..., "CLAUDE_RECALL_STATE": ..., "PROJECT_DIR": ...}`
 - Dev paths (`core/...`) differ from installed paths (`~/.config/claude-recall/...`)
 
 ## Environment
 
 | Variable | Purpose |
 |----------|---------|
-| `CLAUDE_RECALL_BASE` | System lessons dir (preferred) - default: `~/.config/claude-recall` |
-| `RECALL_BASE` | System lessons dir (legacy alias) |
-| `LESSONS_BASE` | System lessons dir (legacy alias) |
-| `CLAUDE_RECALL_STATE` | State/logs dir - default: `~/.local/state/claude-recall` (XDG) |
+| `CLAUDE_RECALL_BASE` | Code directory - default: `~/.config/claude-recall` |
+| `CLAUDE_RECALL_STATE` | State dir (lessons, decay, logs) - default: `~/.local/state/claude-recall` |
 | `PROJECT_DIR` | Project root (default: git root or cwd) |
-| `CLAUDE_RECALL_DEBUG` | Debug level (preferred) |
-| `RECALL_DEBUG` | Debug level (legacy alias) |
-| `LESSONS_DEBUG` | Debug level (legacy alias) - 0=off, 1=info, 2=debug, 3=trace |
+| `CLAUDE_RECALL_DEBUG` | Debug level - 0=off, 1=info, 2=debug, 3=trace |
+| `RECALL_BASE` | Legacy alias for CLAUDE_RECALL_BASE |
+| `LESSONS_BASE` | Legacy alias for CLAUDE_RECALL_BASE |
+| `RECALL_DEBUG` | Legacy alias for CLAUDE_RECALL_DEBUG |
+| `LESSONS_DEBUG` | Legacy alias for CLAUDE_RECALL_DEBUG |
 
 ## Agent Output Patterns
 

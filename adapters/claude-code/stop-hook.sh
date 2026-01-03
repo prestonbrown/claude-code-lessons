@@ -13,7 +13,10 @@ set -uo pipefail
 
 # Support new (CLAUDE_RECALL_*), transitional (RECALL_*), and legacy (LESSONS_*) env vars
 CLAUDE_RECALL_BASE="${CLAUDE_RECALL_BASE:-${RECALL_BASE:-${LESSONS_BASE:-$HOME/.config/claude-recall}}}"
+CLAUDE_RECALL_STATE="${CLAUDE_RECALL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-recall}"
 CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-${RECALL_DEBUG:-${LESSONS_DEBUG:-}}}"
+# Export for downstream Python manager
+export CLAUDE_RECALL_STATE
 # Export legacy names for downstream compatibility
 LESSONS_BASE="$CLAUDE_RECALL_BASE"
 LESSONS_DEBUG="$CLAUDE_RECALL_DEBUG"
@@ -25,7 +28,7 @@ else
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     PYTHON_MANAGER="$SCRIPT_DIR/../../core/cli.py"
 fi
-STATE_DIR="$CLAUDE_RECALL_BASE/.citation-state"
+STATE_DIR="$CLAUDE_RECALL_STATE/.citation-state"
 
 is_enabled() {
     local config="$HOME/.claude/settings.json"

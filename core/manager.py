@@ -20,10 +20,13 @@ except ImportError:
 
 
 def _get_lessons_base() -> Path:
-    """Get the system lessons base directory for Claude Recall.
+    """Get the system lessons base directory for Claude Recall (code location).
 
     Checks environment variables in order of precedence:
     CLAUDE_RECALL_BASE → RECALL_BASE → LESSONS_BASE → default
+
+    Note: This is where the code lives (~/.config/claude-recall/).
+    For mutable state data, use _get_state_dir() instead.
     """
     base_path = (
         os.environ.get("CLAUDE_RECALL_BASE") or
@@ -33,6 +36,26 @@ def _get_lessons_base() -> Path:
     if base_path:
         return Path(base_path)
     return Path.home() / ".config" / "claude-recall"
+
+
+def _get_state_dir() -> Path:
+    """Get the XDG state directory for mutable data.
+
+    This is where system lessons and state files are stored:
+    - LESSONS.md (system lessons)
+    - .decay-last-run (decay timestamp)
+    - .citation-state/ (session checkpoints)
+
+    Checks environment variables in order of precedence:
+    CLAUDE_RECALL_STATE → XDG_STATE_HOME/claude-recall → ~/.local/state/claude-recall
+    """
+    state_path = os.environ.get("CLAUDE_RECALL_STATE")
+    if state_path:
+        return Path(state_path)
+    xdg_state = os.environ.get("XDG_STATE_HOME")
+    if xdg_state:
+        return Path(xdg_state) / "claude-recall"
+    return Path.home() / ".local" / "state" / "claude-recall"
 
 
 def _get_project_data_dir(project_root: Path) -> Path:
@@ -74,21 +97,54 @@ class LessonsManager(LessonsMixin, HandoffsMixin):
         Initialize the lessons manager.
 
         Args:
-            lessons_base: Base directory for system lessons (~/.config/claude-recall)
+            lessons_base: Base directory for code (~/.config/claude-recall)
             project_root: Root directory of the project (containing .git)
         """
         self.lessons_base = Path(lessons_base)
         self.project_root = Path(project_root)
 
-        self.system_lessons_file = self.lessons_base / "LESSONS.md"
+        # State directory for mutable data (XDG compliant)
+        self.state_dir = _get_state_dir()
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+
+        # Auto-migrate system lessons from old location
+        self._migrate_system_lessons()
+
+        self.system_lessons_file = self.state_dir / "LESSONS.md"
+        self._decay_state_file = self.state_dir / ".decay-last-run"
+        self._session_state_dir = self.state_dir / ".citation-state"
 
         # Get project data directory (prefers .claude-recall/ over legacy paths)
         project_data_dir = _get_project_data_dir(self.project_root)
         self.project_lessons_file = project_data_dir / "LESSONS.md"
 
-        self._decay_state_file = self.lessons_base / ".decay-last-run"
-        self._session_state_dir = self.lessons_base / ".citation-state"
+        # Ensure project directory exists with auto-gitignore
+        project_data_dir.mkdir(parents=True, exist_ok=True)
+        self._ensure_gitignore(project_data_dir)
 
-        # Ensure directories exist for both lessons files
-        self.system_lessons_file.parent.mkdir(parents=True, exist_ok=True)
-        self.project_lessons_file.parent.mkdir(parents=True, exist_ok=True)
+    def _migrate_system_lessons(self) -> None:
+        """Migrate system lessons from old ~/.config location to ~/.local/state."""
+        old_location = self.lessons_base / "LESSONS.md"
+        new_location = self.state_dir / "LESSONS.md"
+
+        # Only migrate if old exists and new doesn't
+        if old_location.exists() and not new_location.exists():
+            import shutil
+            shutil.move(str(old_location), str(new_location))
+
+            # Also migrate state files if they exist
+            for state_file in [".decay-last-run"]:
+                old_state = self.lessons_base / state_file
+                if old_state.exists():
+                    shutil.move(str(old_state), str(self.state_dir / state_file))
+
+            # Migrate citation-state directory
+            old_citation_dir = self.lessons_base / ".citation-state"
+            if old_citation_dir.exists():
+                shutil.move(str(old_citation_dir), str(self.state_dir / ".citation-state"))
+
+    def _ensure_gitignore(self, project_data_dir: Path) -> None:
+        """Create .gitignore in project data dir if it doesn't exist."""
+        gitignore = project_data_dir / ".gitignore"
+        if not gitignore.exists():
+            gitignore.write_text("# Auto-generated - claude-recall data\n*\n")
