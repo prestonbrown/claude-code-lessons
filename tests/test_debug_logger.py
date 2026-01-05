@@ -410,3 +410,101 @@ class TestGlobalLogger:
         reset_logger()
         logger2 = get_logger()
         assert logger1 is not logger2
+
+
+# =============================================================================
+# Tests: Timing Methods
+# =============================================================================
+
+
+class TestTimingMethods:
+    """Test timing context managers and hook timing methods."""
+
+    def test_timer_context_manager_logs_at_level_2(self, monkeypatch, temp_state_dir):
+        """timer context manager should log at level 2."""
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "2")
+
+        logger = DebugLogger()
+        with logger.timer("test_operation", {"count": 5}):
+            pass  # Simulate operation
+
+        log_file = temp_state_dir / "debug.log"
+        assert log_file.exists()
+
+        entry = json.loads(log_file.read_text().strip())
+        assert entry["event"] == "timing"
+        assert entry["op"] == "test_operation"
+        assert "ms" in entry
+        assert entry["count"] == 5
+
+    def test_timer_context_manager_not_at_level_1(self, monkeypatch, temp_state_dir):
+        """timer context manager should not log at level 1."""
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "1")
+
+        logger = DebugLogger()
+        with logger.timer("test_operation"):
+            pass
+
+        log_file = temp_state_dir / "debug.log"
+        assert not log_file.exists()
+
+    def test_hook_phase_logs_timing(self, monkeypatch, temp_state_dir):
+        """hook_phase should log phase timing at level 2."""
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "2")
+
+        logger = DebugLogger()
+        logger.hook_phase("inject", "load_lessons", 42.5, {"count": 10})
+
+        log_file = temp_state_dir / "debug.log"
+        assert log_file.exists()
+
+        entry = json.loads(log_file.read_text().strip())
+        assert entry["event"] == "hook_phase"
+        assert entry["hook"] == "inject"
+        assert entry["phase"] == "load_lessons"
+        assert entry["ms"] == 42.5
+        assert entry["count"] == 10
+
+    def test_hook_start_returns_time(self, monkeypatch, temp_state_dir):
+        """hook_start should return start time for duration calculation."""
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "2")
+
+        logger = DebugLogger()
+        start = logger.hook_start("inject", trigger="auto")
+
+        assert isinstance(start, float)
+        assert start > 0
+
+        log_file = temp_state_dir / "debug.log"
+        assert log_file.exists()
+
+        entry = json.loads(log_file.read_text().strip())
+        assert entry["event"] == "hook_start"
+        assert entry["hook"] == "inject"
+        assert entry["trigger"] == "auto"
+
+    def test_hook_end_logs_total_and_phases(self, monkeypatch, temp_state_dir):
+        """hook_end should log total time and phase breakdown."""
+        import time
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "2")
+
+        logger = DebugLogger()
+        start = logger.hook_start("stop")
+        time.sleep(0.01)  # Small delay
+        logger.hook_end("stop", start, {"parse": 10.0, "sync": 20.0})
+
+        log_file = temp_state_dir / "debug.log"
+        content = log_file.read_text().strip().split("\n")
+        assert len(content) == 2
+
+        end_entry = json.loads(content[1])
+        assert end_entry["event"] == "hook_end"
+        assert end_entry["hook"] == "stop"
+        assert end_entry["total_ms"] >= 10  # At least 10ms
+        assert end_entry["phases"]["parse"] == 10.0
+        assert end_entry["phases"]["sync"] == 20.0

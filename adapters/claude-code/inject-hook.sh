@@ -4,13 +4,17 @@
 
 set -euo pipefail
 
+# Timing support - capture start time immediately
+HOOK_START_MS=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || echo 0)
+PHASE_TIMES_JSON="{}"  # Build JSON incrementally (bash 3.x compatible)
+
 # Guard against recursive calls from Haiku subprocesses
 [[ -n "${LESSONS_SCORING_ACTIVE:-}" ]] && exit 0
 
 # Support new (CLAUDE_RECALL_*), transitional (RECALL_*), and legacy (LESSONS_*) env vars
 CLAUDE_RECALL_BASE="${CLAUDE_RECALL_BASE:-${RECALL_BASE:-${LESSONS_BASE:-$HOME/.config/claude-recall}}}"
 CLAUDE_RECALL_STATE="${CLAUDE_RECALL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-recall}"
-CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-${RECALL_DEBUG:-${LESSONS_DEBUG:-}}}"
+CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-${RECALL_DEBUG:-${LESSONS_DEBUG:-1}}}"
 # Export legacy names for downstream compatibility
 LESSONS_BASE="$CLAUDE_RECALL_BASE"
 LESSONS_DEBUG="$CLAUDE_RECALL_DEBUG"
@@ -24,6 +28,37 @@ else
     PYTHON_MANAGER="$SCRIPT_DIR/../../core/cli.py"
 fi
 DECAY_INTERVAL=$((7 * 86400))  # 7 days in seconds
+
+# Timing helpers (bash 3.x compatible - no associative arrays)
+get_ms() {
+    python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || echo 0
+}
+
+log_phase() {
+    local phase="$1"
+    local start_ms="$2"
+    local end_ms=$(get_ms)
+    local duration=$((end_ms - start_ms))
+    # Append to JSON (handles first entry vs subsequent)
+    if [[ "$PHASE_TIMES_JSON" == "{}" ]]; then
+        PHASE_TIMES_JSON="{\"$phase\":$duration"
+    else
+        PHASE_TIMES_JSON="$PHASE_TIMES_JSON,\"$phase\":$duration"
+    fi
+    if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 2 ]] && [[ -f "$PYTHON_MANAGER" ]]; then
+        PROJECT_DIR="${cwd:-$(pwd)}" python3 "$PYTHON_MANAGER" debug hook-phase inject "$phase" "$duration" 2>/dev/null &
+    fi
+}
+
+log_hook_end() {
+    local end_ms=$(get_ms)
+    local total_ms=$((end_ms - HOOK_START_MS))
+    if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 2 ]] && [[ -f "$PYTHON_MANAGER" ]]; then
+        # Close the JSON object
+        local phases_json="${PHASE_TIMES_JSON}}"
+        PROJECT_DIR="${cwd:-$(pwd)}" python3 "$PYTHON_MANAGER" debug hook-end inject "$total_ms" --phases "$phases_json" 2>/dev/null &
+    fi
+}
 
 # Check if enabled
 is_enabled() {
@@ -82,14 +117,18 @@ main() {
     local input=$(cat)
     local cwd=$(echo "$input" | jq -r '.cwd // "."' 2>/dev/null || echo ".")
 
-    # Generate lessons context
+    # Generate lessons context (with timing)
+    local phase_start=$(get_ms)
     local summary=$(generate_context "$cwd")
+    log_phase "load_lessons" "$phase_start"
 
     # Also get active handoffs (project-level only)
     local handoffs=""
     local todo_continuation=""
     if [[ -f "$PYTHON_MANAGER" ]]; then
+        phase_start=$(get_ms)
         handoffs=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" python3 "$PYTHON_MANAGER" handoff inject 2>/dev/null || true)
+        log_phase "load_handoffs" "$phase_start"
 
         # Generate todo continuation prompt if there are active handoffs
         if [[ -n "$handoffs" && "$handoffs" != "(no active handoffs)" ]]; then
@@ -210,6 +249,9 @@ EOF
 
     # Trigger decay check in background (runs weekly)
     run_decay_if_due
+
+    # Log timing summary
+    log_hook_end
 
     exit 0
 }

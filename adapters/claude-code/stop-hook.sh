@@ -8,13 +8,17 @@
 
 set -uo pipefail
 
+# Timing support - capture start time immediately
+HOOK_START_MS=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || echo 0)
+PHASE_TIMES_JSON="{}"  # Build JSON incrementally (bash 3.x compatible)
+
 # Guard against recursive calls from Haiku subprocesses
 [[ -n "${LESSONS_SCORING_ACTIVE:-}" ]] && exit 0
 
 # Support new (CLAUDE_RECALL_*), transitional (RECALL_*), and legacy (LESSONS_*) env vars
 CLAUDE_RECALL_BASE="${CLAUDE_RECALL_BASE:-${RECALL_BASE:-${LESSONS_BASE:-$HOME/.config/claude-recall}}}"
 CLAUDE_RECALL_STATE="${CLAUDE_RECALL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-recall}"
-CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-${RECALL_DEBUG:-${LESSONS_DEBUG:-}}}"
+CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-${RECALL_DEBUG:-${LESSONS_DEBUG:-1}}}"
 # Export for downstream Python manager
 export CLAUDE_RECALL_STATE
 # Export legacy names for downstream compatibility
@@ -29,6 +33,37 @@ else
     PYTHON_MANAGER="$SCRIPT_DIR/../../core/cli.py"
 fi
 STATE_DIR="$CLAUDE_RECALL_STATE/.citation-state"
+
+# Timing helpers (bash 3.x compatible - no associative arrays)
+get_ms() {
+    python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || echo 0
+}
+
+log_phase() {
+    local phase="$1"
+    local start_ms="$2"
+    local end_ms=$(get_ms)
+    local duration=$((end_ms - start_ms))
+    # Append to JSON (handles first entry vs subsequent)
+    if [[ "$PHASE_TIMES_JSON" == "{}" ]]; then
+        PHASE_TIMES_JSON="{\"$phase\":$duration"
+    else
+        PHASE_TIMES_JSON="$PHASE_TIMES_JSON,\"$phase\":$duration"
+    fi
+    if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 2 ]] && [[ -f "$PYTHON_MANAGER" ]]; then
+        PROJECT_DIR="${project_root:-$(pwd)}" python3 "$PYTHON_MANAGER" debug hook-phase stop "$phase" "$duration" 2>/dev/null &
+    fi
+}
+
+log_hook_end() {
+    local end_ms=$(get_ms)
+    local total_ms=$((end_ms - HOOK_START_MS))
+    if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 2 ]] && [[ -f "$PYTHON_MANAGER" ]]; then
+        # Close the JSON object
+        local phases_json="${PHASE_TIMES_JSON}}"
+        PROJECT_DIR="${project_root:-$(pwd)}" python3 "$PYTHON_MANAGER" debug hook-end stop "$total_ms" --phases "$phases_json" 2>/dev/null &
+    fi
+}
 
 is_enabled() {
     local config="$HOME/.claude/settings.json"
@@ -567,13 +602,19 @@ main() {
     [[ -f "$state_file" ]] && last_timestamp=$(cat "$state_file")
 
     # Process AI LESSON: patterns (adds new AI-generated lessons)
+    local phase_start=$(get_ms)
     process_ai_lessons "$transcript_path" "$project_root" "$last_timestamp"
+    log_phase "process_lessons" "$phase_start"
 
     # Process HANDOFF/APPROACH: patterns (handoff tracking and plan mode)
+    phase_start=$(get_ms)
     process_handoffs "$transcript_path" "$project_root" "$last_timestamp"
+    log_phase "process_handoffs" "$phase_start"
 
     # Capture TodoWrite tool calls and sync to handoffs
+    phase_start=$(get_ms)
     capture_todowrite "$transcript_path" "$project_root" "$last_timestamp"
+    log_phase "sync_todos" "$phase_start"
 
     # Warn if major work detected without handoff
     detect_and_warn_missing_handoff "$transcript_path" "$project_root"
@@ -622,10 +663,12 @@ main() {
 
     [[ -z "$citations" ]] && {
         [[ -n "$latest_ts" ]] && echo "$latest_ts" > "$state_file"
+        log_hook_end
         exit 0
     }
 
     # Cite each lesson (Python first, bash fallback)
+    phase_start=$(get_ms)
     local cited_count=0
     while IFS= read -r citation; do
         [[ -z "$citation" ]] && continue
@@ -646,11 +689,15 @@ main() {
             ((cited_count++)) || true
         fi
     done <<< "$citations"
+    log_phase "cite_lessons" "$phase_start"
 
     # Update checkpoint
     [[ -n "$latest_ts" ]] && echo "$latest_ts" > "$state_file"
 
     (( cited_count > 0 )) && echo "[lessons] $cited_count lesson(s) cited" >&2
+
+    # Log timing summary
+    log_hook_end
     exit 0
 }
 

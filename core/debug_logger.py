@@ -336,8 +336,106 @@ class DebugLogger:
         self._write(event)
 
     # =========================================================================
-    # Level 2: Debug events
+    # Level 2: Debug events (includes timing)
     # =========================================================================
+
+    @contextmanager
+    def timer(self, operation: str, context: Optional[Dict[str, Any]] = None):
+        """Context manager to time any operation at level 2.
+
+        Usage:
+            with logger.timer("inject_lessons", {"count": 5}):
+                do_work()
+
+        Logs: {"event": "timing", "op": "inject_lessons", "ms": 42.5, "count": 5}
+        """
+        if self._level < 2:
+            yield
+            return
+
+        start = time.perf_counter()
+        try:
+            yield
+        finally:
+            duration_ms = (time.perf_counter() - start) * 1000
+            event = {
+                "event": "timing",
+                "level": "debug",
+                "op": operation,
+                "ms": round(duration_ms, 2),
+            }
+            if context:
+                event.update(context)
+            self._write(event)
+
+    def hook_start(self, hook_name: str, trigger: Optional[str] = None) -> float:
+        """Log hook start and return start time for later duration calc.
+
+        Args:
+            hook_name: inject, stop, precompact, etc.
+            trigger: What triggered the hook (auto, manual, compact, etc.)
+
+        Returns:
+            Start time (time.perf_counter()) for passing to hook_end
+        """
+        start = time.perf_counter()
+        if self._level < 2:
+            return start
+
+        event = {
+            "event": "hook_start",
+            "level": "debug",
+            "hook": hook_name,
+        }
+        if trigger:
+            event["trigger"] = trigger
+        self._write(event)
+        return start
+
+    def hook_end(self, hook_name: str, start_time: float, phases: Optional[Dict[str, float]] = None) -> None:
+        """Log hook completion with total and phase timings.
+
+        Args:
+            hook_name: inject, stop, precompact, etc.
+            start_time: Value returned from hook_start
+            phases: Dict of phase_name -> duration_ms for breakdown
+        """
+        if self._level < 2:
+            return
+
+        total_ms = (time.perf_counter() - start_time) * 1000
+        event = {
+            "event": "hook_end",
+            "level": "debug",
+            "hook": hook_name,
+            "total_ms": round(total_ms, 2),
+        }
+        if phases:
+            event["phases"] = {k: round(v, 2) for k, v in phases.items()}
+        self._write(event)
+
+    def hook_phase(self, hook_name: str, phase: str, duration_ms: float, details: Optional[Dict] = None) -> None:
+        """Log individual hook phase timing.
+
+        Args:
+            hook_name: inject, stop, precompact
+            phase: Phase name like "load_lessons", "parse_output", "haiku_call"
+            duration_ms: How long this phase took
+            details: Optional additional context
+        """
+        if self._level < 2:
+            return
+
+        event = {
+            "event": "hook_phase",
+            "level": "debug",
+            "hook": hook_name,
+            "phase": phase,
+            "ms": round(duration_ms, 2),
+        }
+        if details:
+            event.update(details)
+        self._write(event)
 
     def relevance_score(
         self,

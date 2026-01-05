@@ -223,6 +223,28 @@ def main():
     )
     resume_parser.add_argument("id", help="Handoff ID (e.g., A001 or hf-abc1234)")
 
+    # Debug commands for logging from bash hooks
+    debug_parser = subparsers.add_parser("debug", help="Debug logging commands")
+    debug_subparsers = debug_parser.add_subparsers(dest="debug_command")
+
+    # debug hook-start <hook> [--trigger <trigger>]
+    hook_start_parser = debug_subparsers.add_parser("hook-start", help="Log hook start")
+    hook_start_parser.add_argument("hook", help="Hook name (inject, stop, precompact)")
+    hook_start_parser.add_argument("--trigger", help="What triggered the hook")
+
+    # debug hook-phase <hook> <phase> <ms> [--key=value ...]
+    hook_phase_parser = debug_subparsers.add_parser("hook-phase", help="Log hook phase timing")
+    hook_phase_parser.add_argument("hook", help="Hook name")
+    hook_phase_parser.add_argument("phase", help="Phase name")
+    hook_phase_parser.add_argument("ms", type=float, help="Duration in milliseconds")
+    hook_phase_parser.add_argument("--details", help="JSON details object")
+
+    # debug hook-end <hook> <total_ms> [--phases <json>]
+    hook_end_parser = debug_subparsers.add_parser("hook-end", help="Log hook end")
+    hook_end_parser.add_argument("hook", help="Hook name")
+    hook_end_parser.add_argument("total_ms", type=float, help="Total duration in ms")
+    hook_end_parser.add_argument("--phases", help="JSON object of phase->ms timings")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -531,6 +553,43 @@ def main():
             elif args.handoff_command == "resume":
                 result = manager.handoff_resume(args.id)
                 print(result.format())
+
+        elif args.command == "debug":
+            from core.debug_logger import get_logger
+            logger = get_logger()
+
+            if args.debug_command == "hook-start":
+                logger.hook_start(args.hook, args.trigger)
+            elif args.debug_command == "hook-phase":
+                details = None
+                if args.details:
+                    try:
+                        details = json_module.loads(args.details)
+                    except json_module.JSONDecodeError:
+                        pass
+                logger.hook_phase(args.hook, args.phase, args.ms, details)
+            elif args.debug_command == "hook-end":
+                phases = None
+                if args.phases:
+                    try:
+                        phases = json_module.loads(args.phases)
+                    except json_module.JSONDecodeError:
+                        pass
+                # hook_end expects start_time, but from bash we just log directly
+                # So we use a simple event write instead
+                if logger.level >= 2:
+                    event = {
+                        "event": "hook_end",
+                        "level": "debug",
+                        "hook": args.hook,
+                        "total_ms": round(args.total_ms, 2),
+                    }
+                    if phases:
+                        event["phases"] = {k: round(v, 2) for k, v in phases.items()}
+                    logger._write(event)
+            else:
+                print("Unknown debug command", file=sys.stderr)
+                sys.exit(1)
 
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
