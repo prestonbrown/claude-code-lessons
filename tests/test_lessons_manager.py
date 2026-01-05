@@ -1311,6 +1311,47 @@ class TestCLI:
         assert result.returncode == 0
         assert "Fresh Lesson" in result.stdout  # Now stale due to date change
 
+    def test_cli_inject_from_different_cwd(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """CLI inject should work when run from a different working directory.
+
+        This catches import errors that only manifest when running the CLI
+        as a subprocess from a directory other than the repo root.
+        """
+        from core import LessonsManager
+
+        # Set state dir for manager
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson(
+            level="project", category="pattern",
+            title="Import Test", content="Testing imports work from different cwd"
+        )
+
+        # Get absolute path to cli.py
+        cli_path = Path(__file__).parent.parent / "core" / "cli.py"
+
+        # Run from /tmp (different directory than repo root)
+        # This is what hooks do - they call python3 /full/path/to/cli.py
+        result = subprocess.run(
+            ["python3", str(cli_path), "inject", "3"],
+            capture_output=True,
+            text=True,
+            cwd="/tmp",  # KEY: Run from different directory
+            env={
+                **os.environ,
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_STATE": str(temp_state_dir),
+                "PROJECT_DIR": str(temp_project_root),
+            },
+        )
+
+        assert result.returncode == 0, f"inject failed: {result.stderr}"
+        assert "LESSONS" in result.stdout
+        assert "Import Test" in result.stdout
+
 
 # =============================================================================
 # Shell Hook Tests

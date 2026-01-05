@@ -210,7 +210,10 @@ class InjectionResult:
     def format(self) -> str:
         """Format injection result for display (condensed format)."""
         # Late import to avoid circular dependency
-        from core.parsing import frame_lesson_content
+        try:
+            from core.parsing import frame_lesson_content
+        except ImportError:
+            from parsing import frame_lesson_content
 
         if not self.all_lessons:
             return ""
