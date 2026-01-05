@@ -513,6 +513,34 @@ capture_todowrite() {
     fi
 }
 
+# Detect major work without handoff and warn
+detect_and_warn_missing_handoff() {
+    local transcript_path="$1"
+    local project_root="$2"
+
+    # Check if any handoff exists now (may have been created by capture_todowrite)
+    local handoff_exists=""
+    if [[ -f "$PYTHON_MANAGER" ]]; then
+        handoff_exists=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
+            python3 "$PYTHON_MANAGER" handoff list 2>/dev/null | grep -E '\[hf-' | head -1 || true)
+    fi
+    [[ -n "$handoff_exists" ]] && return 0
+
+    # Count unique file edits to detect major work
+    local edit_count
+    edit_count=$(jq -rs '[.[].message.content[]? | select(.type == "tool_use" and .name == "Edit") | .input.file_path] | unique | length' "$transcript_path" 2>/dev/null || echo "0")
+
+    # Count TodoWrite items
+    local todo_count
+    todo_count=$(jq -s '[.[].message.content[]? | select(.type == "tool_use" and .name == "TodoWrite")] | length' "$transcript_path" 2>/dev/null || echo "0")
+
+    # Warning threshold: 4+ file edits OR 3+ TodoWrite calls without handoff
+    if [[ $edit_count -ge 4 || $todo_count -ge 3 ]]; then
+        echo "[WARNING] Major work detected ($edit_count file edits, $todo_count TodoWrite calls) without handoff!" >&2
+        echo "[WARNING] Consider using HANDOFF: title or TodoWrite for session continuity." >&2
+    fi
+}
+
 main() {
     is_enabled || exit 0
 
@@ -546,6 +574,9 @@ main() {
 
     # Capture TodoWrite tool calls and sync to handoffs
     capture_todowrite "$transcript_path" "$project_root" "$last_timestamp"
+
+    # Warn if major work detected without handoff
+    detect_and_warn_missing_handoff "$transcript_path" "$project_root"
 
     # Process entries newer than checkpoint
     # Filter by timestamp, extract citations from assistant messages

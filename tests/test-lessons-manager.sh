@@ -20,12 +20,14 @@ NC='\033[0m' # No Color
 
 # Override paths for testing
 export CLAUDE_RECALL_BASE="$TEST_DIR/.config/claude-recall"
+export CLAUDE_RECALL_STATE="$TEST_DIR/.local/state/claude-recall"
 export PROJECT_DIR="$TEST_DIR/project"
 
 setup() {
     rm -rf "$TEST_DIR"
     mkdir -p "$TEST_DIR/project/.git"  # Fake git repo
     mkdir -p "$CLAUDE_RECALL_BASE"
+    mkdir -p "$CLAUDE_RECALL_STATE"  # Isolate system lessons
 }
 
 teardown() {

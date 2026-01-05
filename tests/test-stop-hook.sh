@@ -21,6 +21,7 @@ NC='\033[0m'
 
 # Override paths for testing
 export CLAUDE_RECALL_BASE="$TEST_DIR/.config/claude-recall"
+export CLAUDE_RECALL_STATE="$TEST_DIR/.local/state/claude-recall"
 export PROJECT_DIR="$TEST_DIR/project"
 export HOME="$TEST_DIR"  # Override HOME for .claude paths
 
@@ -28,6 +29,7 @@ setup() {
     rm -rf "$TEST_DIR"
     mkdir -p "$TEST_DIR/project/.git"  # Fake git repo
     mkdir -p "$CLAUDE_RECALL_BASE"
+    mkdir -p "$CLAUDE_RECALL_STATE"  # Isolate system lessons
     mkdir -p "$TEST_DIR/.claude"
 
     # Create settings.json with lessons enabled

@@ -17,7 +17,7 @@ File format:
 
     ## Active Approaches
 
-    ### [A001] Implementing WebSocket reconnection
+    ### [hf-0000001] Implementing WebSocket reconnection
     - **Status**: in_progress | **Created**: 2025-12-28 | **Updated**: 2025-12-28
     - **Files**: src/websocket.ts, src/connection-manager.ts
     - **Description**: Add automatic reconnection with exponential backoff
@@ -78,7 +78,10 @@ def temp_project_root(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def manager(temp_lessons_base: Path, temp_project_root: Path) -> "LessonsManager":
-    """Create a LessonsManager instance with temporary paths."""
+    """Create a LessonsManager instance with temporary paths.
+
+    Note: CLAUDE_RECALL_STATE is set by conftest.py autouse fixture.
+    """
     return LessonsManager(
         lessons_base=temp_lessons_base,
         project_root=temp_project_root,
@@ -86,26 +89,23 @@ def manager(temp_lessons_base: Path, temp_project_root: Path) -> "LessonsManager
 
 
 @pytest.fixture
-def manager_with_approaches(manager: "LessonsManager") -> "LessonsManager":
-    """Create a manager with some pre-existing approaches using legacy A### IDs.
+def manager_with_handoffs(manager: "LessonsManager") -> "LessonsManager":
+    """Create a manager with some pre-existing handoffs.
 
-    This fixture simulates having existing handoffs with the old ID format,
-    which is important for backward compatibility testing. Many tests rely
-    on the specific IDs A001, A002, A003.
+    Tests rely on the specific IDs hf-0000001, hf-0000002, hf-0000003.
     """
-    # Write legacy format directly to test backward compatibility
     handoffs_file = manager.project_handoffs_file
     handoffs_file.parent.mkdir(parents=True, exist_ok=True)
 
     today = date.today().isoformat()
-    legacy_content = f"""# HANDOFFS.md - Active Work Tracking
+    content = f"""# HANDOFFS.md - Active Work Tracking
 
 > Track ongoing work with tried steps and next steps.
 > When completed, review for lessons to extract.
 
 ## Active Handoffs
 
-### [A001] Implementing WebSocket reconnection
+### [hf-0000001] Implementing WebSocket reconnection
 - **Status**: not_started | **Phase**: research | **Agent**: user
 - **Created**: {today} | **Updated**: {today}
 - **Files**: src/websocket.ts, src/connection-manager.ts
@@ -117,7 +117,7 @@ def manager_with_approaches(manager: "LessonsManager") -> "LessonsManager":
 
 ---
 
-### [A002] Refactoring database layer
+### [hf-0000002] Refactoring database layer
 - **Status**: not_started | **Phase**: research | **Agent**: user
 - **Created**: {today} | **Updated**: {today}
 - **Files**: src/db/models.py
@@ -129,7 +129,7 @@ def manager_with_approaches(manager: "LessonsManager") -> "LessonsManager":
 
 ---
 
-### [A003] Adding unit tests
+### [hf-0000003] Adding unit tests
 - **Status**: not_started | **Phase**: research | **Agent**: user
 - **Created**: {today} | **Updated**: {today}
 - **Files**:
@@ -141,7 +141,7 @@ def manager_with_approaches(manager: "LessonsManager") -> "LessonsManager":
 
 ---
 """
-    handoffs_file.write_text(legacy_content)
+    handoffs_file.write_text(content)
     return manager
 
 
@@ -153,21 +153,21 @@ def manager_with_approaches(manager: "LessonsManager") -> "LessonsManager":
 class TestHandoffAdd:
     """Tests for adding handoffs."""
 
-    def test_approach_add_creates_file(self, manager: "LessonsManager"):
-        """Adding an approach should create the handoffs file (HANDOFFS.md or legacy APPROACHES.md)."""
-        manager.approach_add(title="Test approach")
+    def test_handoff_add_creates_file(self, manager: "LessonsManager"):
+        """Adding a handoff should create the handoffs file (HANDOFFS.md or legacy APPROACHES.md)."""
+        manager.handoff_add(title="Test approach")
 
         # Use the manager's property to get the actual file path
-        approaches_file = manager.project_handoffs_file
-        assert approaches_file.exists()
-        content = approaches_file.read_text()
+        handoffs_file = manager.project_handoffs_file
+        assert handoffs_file.exists()
+        content = handoffs_file.read_text()
         assert "Test approach" in content
 
-    def test_approach_add_assigns_hash_id(self, manager: "LessonsManager"):
+    def test_handoff_add_assigns_hash_id(self, manager: "LessonsManager"):
         """Approach IDs should be hash-based with hf- prefix."""
-        id1 = manager.approach_add(title="First approach")
-        id2 = manager.approach_add(title="Second approach")
-        id3 = manager.approach_add(title="Third approach")
+        id1 = manager.handoff_add(title="First approach")
+        id2 = manager.handoff_add(title="Second approach")
+        id3 = manager.handoff_add(title="Third approach")
 
         # New IDs are hash-based with hf- prefix
         assert id1.startswith("hf-")
@@ -176,43 +176,43 @@ class TestHandoffAdd:
         # IDs should all be unique
         assert len({id1, id2, id3}) == 3
 
-    def test_approach_add_with_description(self, manager: "LessonsManager"):
-        """Adding an approach with description should store it."""
-        approach_id = manager.approach_add(
+    def test_handoff_add_with_description(self, manager: "LessonsManager"):
+        """Adding a handoff with description should store it."""
+        handoff_id = manager.handoff_add(
             title="Feature work",
             desc="Implementing the new feature with proper error handling",
         )
 
-        approach = manager.approach_get(approach_id)
-        assert approach is not None
-        assert approach.description == "Implementing the new feature with proper error handling"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff is not None
+        assert handoff.description == "Implementing the new feature with proper error handling"
 
-    def test_approach_add_with_files(self, manager: "LessonsManager"):
-        """Adding an approach with files should store the file list."""
-        approach_id = manager.approach_add(
+    def test_handoff_add_with_files(self, manager: "LessonsManager"):
+        """Adding a handoff with files should store the file list."""
+        handoff_id = manager.handoff_add(
             title="Multi-file refactor",
             files=["src/main.py", "src/utils.py", "tests/test_main.py"],
         )
 
-        approach = manager.approach_get(approach_id)
-        assert approach is not None
-        assert approach.files == ["src/main.py", "src/utils.py", "tests/test_main.py"]
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff is not None
+        assert handoff.files == ["src/main.py", "src/utils.py", "tests/test_main.py"]
 
-    def test_approach_add_initializes_metadata(self, manager: "LessonsManager"):
-        """New approaches should have correct initial metadata."""
-        approach_id = manager.approach_add(title="New work")
-        approach = manager.approach_get(approach_id)
+    def test_handoff_add_initializes_metadata(self, manager: "LessonsManager"):
+        """New handoffs should have correct initial metadata."""
+        handoff_id = manager.handoff_add(title="New work")
+        handoff = manager.handoff_get(handoff_id)
 
-        assert approach is not None
-        assert approach.status == "not_started"
-        assert approach.created == date.today()
-        assert approach.updated == date.today()
-        assert approach.tried == []
-        assert approach.next_steps == ""
+        assert handoff is not None
+        assert handoff.status == "not_started"
+        assert handoff.created == date.today()
+        assert handoff.updated == date.today()
+        assert handoff.tried == []
+        assert handoff.next_steps == ""
 
-    def test_approach_add_returns_id(self, manager: "LessonsManager"):
-        """Adding an approach should return a hash-based ID."""
-        result = manager.approach_add(title="Return test")
+    def test_handoff_add_returns_id(self, manager: "LessonsManager"):
+        """Adding a handoff should return a hash-based ID."""
+        result = manager.handoff_add(title="Return test")
 
         assert result.startswith("hf-")
         assert len(result) == 10  # hf- + 7 hex chars
@@ -227,194 +227,194 @@ class TestHandoffAdd:
 class TestHandoffUpdateStatus:
     """Tests for updating handoff status."""
 
-    def test_approach_update_status_valid(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_update_status_valid(self, manager_with_handoffs: "LessonsManager"):
         """Should update status with valid values."""
-        manager_with_approaches.approach_update_status("A001", "in_progress")
-        approach = manager_with_approaches.approach_get("A001")
-        assert approach.status == "in_progress"
+        manager_with_handoffs.handoff_update_status("hf-0000001", "in_progress")
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.status == "in_progress"
 
-        manager_with_approaches.approach_update_status("A001", "blocked")
-        approach = manager_with_approaches.approach_get("A001")
-        assert approach.status == "blocked"
+        manager_with_handoffs.handoff_update_status("hf-0000001", "blocked")
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.status == "blocked"
 
-        manager_with_approaches.approach_update_status("A001", "completed")
-        approach = manager_with_approaches.approach_get("A001")
-        assert approach.status == "completed"
+        manager_with_handoffs.handoff_update_status("hf-0000001", "completed")
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.status == "completed"
 
-    def test_approach_update_status_invalid_rejects(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_update_status_invalid_rejects(self, manager_with_handoffs: "LessonsManager"):
         """Should reject invalid status values."""
         with pytest.raises(ValueError, match="[Ii]nvalid status"):
-            manager_with_approaches.approach_update_status("A001", "invalid_status")
+            manager_with_handoffs.handoff_update_status("hf-0000001", "invalid_status")
 
         with pytest.raises(ValueError, match="[Ii]nvalid status"):
-            manager_with_approaches.approach_update_status("A001", "done")
+            manager_with_handoffs.handoff_update_status("hf-0000001", "done")
 
         with pytest.raises(ValueError, match="[Ii]nvalid status"):
-            manager_with_approaches.approach_update_status("A001", "")
+            manager_with_handoffs.handoff_update_status("hf-0000001", "")
 
-    def test_approach_update_status_nonexistent_fails(self, manager: "LessonsManager"):
-        """Should fail when updating nonexistent approach."""
+    def test_handoff_update_status_nonexistent_fails(self, manager: "LessonsManager"):
+        """Should fail when updating nonexistent handoff."""
         with pytest.raises(ValueError, match="not found"):
-            manager.approach_update_status("A999", "in_progress")
+            manager.handoff_update_status("A999", "in_progress")
 
 
 class TestHandoffAddTried:
     """Tests for adding tried steps."""
 
-    def test_approach_add_tried_success(self, manager_with_approaches: "LessonsManager"):
-        """Should add a successful tried approach."""
-        manager_with_approaches.approach_add_tried(
-            "A001",
+    def test_handoff_add_tried_success(self, manager_with_handoffs: "LessonsManager"):
+        """Should add a successful tried handoff."""
+        manager_with_handoffs.handoff_add_tried(
+            "hf-0000001",
             outcome="success",
             description="Event-based with AbortController - clean and testable",
         )
 
-        approach = manager_with_approaches.approach_get("A001")
-        assert len(approach.tried) == 1
-        assert approach.tried[0].outcome == "success"
-        assert approach.tried[0].description == "Event-based with AbortController - clean and testable"
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert len(handoff.tried) == 1
+        assert handoff.tried[0].outcome == "success"
+        assert handoff.tried[0].description == "Event-based with AbortController - clean and testable"
 
-    def test_approach_add_tried_fail(self, manager_with_approaches: "LessonsManager"):
-        """Should add a failed tried approach."""
-        manager_with_approaches.approach_add_tried(
-            "A001",
+    def test_handoff_add_tried_fail(self, manager_with_handoffs: "LessonsManager"):
+        """Should add a failed tried handoff."""
+        manager_with_handoffs.handoff_add_tried(
+            "hf-0000001",
             outcome="fail",
             description="Simple setTimeout retry - races with manual disconnect",
         )
 
-        approach = manager_with_approaches.approach_get("A001")
-        assert len(approach.tried) == 1
-        assert approach.tried[0].outcome == "fail"
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert len(handoff.tried) == 1
+        assert handoff.tried[0].outcome == "fail"
 
-    def test_approach_add_tried_partial(self, manager_with_approaches: "LessonsManager"):
-        """Should add a partial success tried approach."""
-        manager_with_approaches.approach_add_tried(
-            "A001",
+    def test_handoff_add_tried_partial(self, manager_with_handoffs: "LessonsManager"):
+        """Should add a partial success tried handoff."""
+        manager_with_handoffs.handoff_add_tried(
+            "hf-0000001",
             outcome="partial",
             description="State machine approach - works but complex",
         )
 
-        approach = manager_with_approaches.approach_get("A001")
-        assert len(approach.tried) == 1
-        assert approach.tried[0].outcome == "partial"
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert len(handoff.tried) == 1
+        assert handoff.tried[0].outcome == "partial"
 
-    def test_approach_add_tried_multiple(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_add_tried_multiple(self, manager_with_handoffs: "LessonsManager"):
         """Should support adding multiple tried approaches in order."""
-        manager_with_approaches.approach_add_tried("A001", "fail", "First attempt - failed")
-        manager_with_approaches.approach_add_tried("A001", "partial", "Second attempt - partial")
-        manager_with_approaches.approach_add_tried("A001", "success", "Third attempt - worked")
+        manager_with_handoffs.handoff_add_tried("hf-0000001", "fail", "First attempt - failed")
+        manager_with_handoffs.handoff_add_tried("hf-0000001", "partial", "Second attempt - partial")
+        manager_with_handoffs.handoff_add_tried("hf-0000001", "success", "Third attempt - worked")
 
-        approach = manager_with_approaches.approach_get("A001")
-        assert len(approach.tried) == 3
-        assert approach.tried[0].description == "First attempt - failed"
-        assert approach.tried[1].description == "Second attempt - partial"
-        assert approach.tried[2].description == "Third attempt - worked"
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert len(handoff.tried) == 3
+        assert handoff.tried[0].description == "First attempt - failed"
+        assert handoff.tried[1].description == "Second attempt - partial"
+        assert handoff.tried[2].description == "Third attempt - worked"
 
-    def test_approach_add_tried_invalid_outcome(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_add_tried_invalid_outcome(self, manager_with_handoffs: "LessonsManager"):
         """Should reject invalid outcome values."""
         with pytest.raises(ValueError, match="[Ii]nvalid outcome"):
-            manager_with_approaches.approach_add_tried("A001", "maybe", "Uncertain result")
+            manager_with_handoffs.handoff_add_tried("hf-0000001", "maybe", "Uncertain result")
 
 
 class TestHandoffUpdateNext:
     """Tests for updating next steps."""
 
-    def test_approach_update_next(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_update_next(self, manager_with_handoffs: "LessonsManager"):
         """Should update the next steps field."""
-        manager_with_approaches.approach_update_next(
-            "A001",
+        manager_with_handoffs.handoff_update_next(
+            "hf-0000001",
             "Write integration tests for edge cases",
         )
 
-        approach = manager_with_approaches.approach_get("A001")
-        assert approach.next_steps == "Write integration tests for edge cases"
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.next_steps == "Write integration tests for edge cases"
 
-    def test_approach_update_next_overwrites(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_update_next_overwrites(self, manager_with_handoffs: "LessonsManager"):
         """Updating next steps should overwrite previous value."""
-        manager_with_approaches.approach_update_next("A001", "First next step")
-        manager_with_approaches.approach_update_next("A001", "Updated next step")
+        manager_with_handoffs.handoff_update_next("hf-0000001", "First next step")
+        manager_with_handoffs.handoff_update_next("hf-0000001", "Updated next step")
 
-        approach = manager_with_approaches.approach_get("A001")
-        assert approach.next_steps == "Updated next step"
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.next_steps == "Updated next step"
 
-    def test_approach_update_next_empty(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_update_next_empty(self, manager_with_handoffs: "LessonsManager"):
         """Should allow clearing next steps."""
-        manager_with_approaches.approach_update_next("A001", "Some steps")
-        manager_with_approaches.approach_update_next("A001", "")
+        manager_with_handoffs.handoff_update_next("hf-0000001", "Some steps")
+        manager_with_handoffs.handoff_update_next("hf-0000001", "")
 
-        approach = manager_with_approaches.approach_get("A001")
-        assert approach.next_steps == ""
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.next_steps == ""
 
 
 class TestHandoffUpdateFiles:
     """Tests for updating file lists."""
 
-    def test_approach_update_files(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_update_files(self, manager_with_handoffs: "LessonsManager"):
         """Should update the files list."""
-        manager_with_approaches.approach_update_files(
-            "A001",
+        manager_with_handoffs.handoff_update_files(
+            "hf-0000001",
             ["new/file1.py", "new/file2.py"],
         )
 
-        approach = manager_with_approaches.approach_get("A001")
-        assert approach.files == ["new/file1.py", "new/file2.py"]
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.files == ["new/file1.py", "new/file2.py"]
 
-    def test_approach_update_files_replaces(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_update_files_replaces(self, manager_with_handoffs: "LessonsManager"):
         """Updating files should replace the entire list."""
-        manager_with_approaches.approach_update_files("A001", ["a.py", "b.py"])
-        manager_with_approaches.approach_update_files("A001", ["c.py"])
+        manager_with_handoffs.handoff_update_files("hf-0000001", ["a.py", "b.py"])
+        manager_with_handoffs.handoff_update_files("hf-0000001", ["c.py"])
 
-        approach = manager_with_approaches.approach_get("A001")
-        assert approach.files == ["c.py"]
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.files == ["c.py"]
 
-    def test_approach_update_files_empty(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_update_files_empty(self, manager_with_handoffs: "LessonsManager"):
         """Should allow clearing file list."""
-        manager_with_approaches.approach_update_files("A001", ["some.py"])
-        manager_with_approaches.approach_update_files("A001", [])
+        manager_with_handoffs.handoff_update_files("hf-0000001", ["some.py"])
+        manager_with_handoffs.handoff_update_files("hf-0000001", [])
 
-        approach = manager_with_approaches.approach_get("A001")
-        assert approach.files == []
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.files == []
 
 
 class TestHandoffUpdateDesc:
     """Tests for updating description."""
 
-    def test_approach_update_desc(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_update_desc(self, manager_with_handoffs: "LessonsManager"):
         """Should update the description."""
-        manager_with_approaches.approach_update_desc("A001", "New description text")
+        manager_with_handoffs.handoff_update_desc("hf-0000001", "New description text")
 
-        approach = manager_with_approaches.approach_get("A001")
-        assert approach.description == "New description text"
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.description == "New description text"
 
 
 class TestHandoffUpdateSetsDate:
     """Tests for automatic date updates."""
 
-    def test_approach_update_sets_updated_date(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_update_sets_updated_date(self, manager_with_handoffs: "LessonsManager"):
         """Any update should set the updated date to today."""
         # Manually set updated to a past date for testing
-        approach = manager_with_approaches.approach_get("A001")
-        original_updated = approach.updated
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        original_updated = handoff.updated
 
         # Make an update
-        manager_with_approaches.approach_update_status("A001", "in_progress")
+        manager_with_handoffs.handoff_update_status("hf-0000001", "in_progress")
 
-        approach = manager_with_approaches.approach_get("A001")
-        assert approach.updated == date.today()
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.updated == date.today()
 
-    def test_approach_add_tried_updates_date(self, manager_with_approaches: "LessonsManager"):
-        """Adding a tried approach should update the date."""
-        manager_with_approaches.approach_add_tried("A001", "fail", "Test")
+    def test_handoff_add_tried_updates_date(self, manager_with_handoffs: "LessonsManager"):
+        """Adding a tried handoff should update the date."""
+        manager_with_handoffs.handoff_add_tried("hf-0000001", "fail", "Test")
 
-        approach = manager_with_approaches.approach_get("A001")
-        assert approach.updated == date.today()
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.updated == date.today()
 
-    def test_approach_update_next_updates_date(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_update_next_updates_date(self, manager_with_handoffs: "LessonsManager"):
         """Updating next steps should update the date."""
-        manager_with_approaches.approach_update_next("A001", "Next steps here")
+        manager_with_handoffs.handoff_update_next("hf-0000001", "Next steps here")
 
-        approach = manager_with_approaches.approach_get("A001")
-        assert approach.updated == date.today()
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.updated == date.today()
 
 
 # =============================================================================
@@ -425,22 +425,22 @@ class TestHandoffUpdateSetsDate:
 class TestHandoffComplete:
     """Tests for completing handoffs."""
 
-    def test_approach_complete_sets_status(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_complete_sets_status(self, manager_with_handoffs: "LessonsManager"):
         """Completing should set status to completed."""
-        manager_with_approaches.approach_complete("A001")
+        manager_with_handoffs.handoff_complete("hf-0000001")
 
-        approach = manager_with_approaches.approach_get("A001")
-        assert approach.status == "completed"
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.status == "completed"
 
-    def test_approach_complete_returns_extraction_prompt(
-        self, manager_with_approaches: "LessonsManager"
+    def test_handoff_complete_returns_extraction_prompt(
+        self, manager_with_handoffs: "LessonsManager"
     ):
         """Completing should return a prompt for lesson extraction."""
         # Add some tried approaches first
-        manager_with_approaches.approach_add_tried("A001", "fail", "First failed attempt")
-        manager_with_approaches.approach_add_tried("A001", "success", "Successful approach")
+        manager_with_handoffs.handoff_add_tried("hf-0000001", "fail", "First failed attempt")
+        manager_with_handoffs.handoff_add_tried("hf-0000001", "success", "Successful approach")
 
-        result = manager_with_approaches.approach_complete("A001")
+        result = manager_with_handoffs.handoff_complete("hf-0000001")
 
         # Should return ApproachCompleteResult with extraction_prompt
         assert hasattr(result, "extraction_prompt")
@@ -449,88 +449,88 @@ class TestHandoffComplete:
         # Prompt should mention lesson extraction or similar
         assert "lesson" in result.extraction_prompt.lower() or "extract" in result.extraction_prompt.lower()
 
-    def test_approach_complete_result_includes_approach_data(
-        self, manager_with_approaches: "LessonsManager"
+    def test_handoff_complete_result_includes_approach_data(
+        self, manager_with_handoffs: "LessonsManager"
     ):
         """Complete result should include the approach data for reference."""
-        manager_with_approaches.approach_add_tried("A001", "success", "What worked")
+        manager_with_handoffs.handoff_add_tried("hf-0000001", "success", "What worked")
 
-        result = manager_with_approaches.approach_complete("A001")
+        result = manager_with_handoffs.handoff_complete("hf-0000001")
 
         assert hasattr(result, "approach")
-        assert result.approach.title == "Implementing WebSocket reconnection"
+        assert result.handoff.title == "Implementing WebSocket reconnection"
 
 
 class TestHandoffArchive:
     """Tests for archiving handoffs."""
 
-    def test_approach_archive_moves_to_archive_file(
-        self, manager_with_approaches: "LessonsManager"
+    def test_handoff_archive_moves_to_archive_file(
+        self, manager_with_handoffs: "LessonsManager"
     ):
         """Archiving should move approach to APPROACHES_ARCHIVE.md."""
-        manager_with_approaches.approach_archive("A001")
+        manager_with_handoffs.handoff_archive("hf-0000001")
 
         # Should no longer be in main file
-        approach = manager_with_approaches.approach_get("A001")
-        assert approach is None
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff is None
 
         # Should be in archive file
-        archive_file = manager_with_approaches.project_handoffs_archive
+        archive_file = manager_with_handoffs.project_handoffs_archive
         assert archive_file.exists()
         content = archive_file.read_text()
-        assert "A001" in content
+        assert "hf-0000001" in content
         assert "Implementing WebSocket reconnection" in content
 
-    def test_approach_archive_creates_archive_if_missing(self, manager: "LessonsManager"):
+    def test_handoff_archive_creates_archive_if_missing(self, manager: "LessonsManager"):
         """Archiving should create archive file if it doesn't exist."""
-        approach_id = manager.approach_add(title="To be archived")
+        handoff_id = manager.handoff_add(title="To be archived")
 
         # Archive file should not exist yet (we check after creating approach since
         # the property path depends on which data dir exists)
         archive_file = manager.project_handoffs_archive
         assert not archive_file.exists()
 
-        manager.approach_archive(approach_id)
+        manager.handoff_archive(handoff_id)
 
         # Re-get the path (it might have been created by the archive operation)
         archive_file = manager.project_handoffs_archive
         assert archive_file.exists()
 
-    def test_approach_archive_preserves_data(self, manager_with_approaches: "LessonsManager"):
-        """Archived approach should preserve all its data."""
+    def test_handoff_archive_preserves_data(self, manager_with_handoffs: "LessonsManager"):
+        """Archived handoff should preserve all its data."""
         # Add some data first
-        manager_with_approaches.approach_update_status("A001", "in_progress")
-        manager_with_approaches.approach_add_tried("A001", "fail", "Failed attempt")
-        manager_with_approaches.approach_add_tried("A001", "success", "Worked!")
-        manager_with_approaches.approach_update_next("A001", "Document the solution")
+        manager_with_handoffs.handoff_update_status("hf-0000001", "in_progress")
+        manager_with_handoffs.handoff_add_tried("hf-0000001", "fail", "Failed attempt")
+        manager_with_handoffs.handoff_add_tried("hf-0000001", "success", "Worked!")
+        manager_with_handoffs.handoff_update_next("hf-0000001", "Document the solution")
 
         # Get data before archive
-        approach_before = manager_with_approaches.approach_get("A001")
+        handoff_before = manager_with_handoffs.handoff_get("hf-0000001")
 
-        manager_with_approaches.approach_archive("A001")
+        manager_with_handoffs.handoff_archive("hf-0000001")
 
         # Read archive file and verify data is present
-        archive_file = manager_with_approaches.project_handoffs_archive
+        archive_file = manager_with_handoffs.project_handoffs_archive
         content = archive_file.read_text()
 
-        assert approach_before.title in content
+        assert handoff_before.title in content
         assert "fail" in content.lower()
         assert "success" in content.lower()
         assert "Failed attempt" in content
         assert "Worked!" in content
 
-    def test_approach_archive_appends_to_existing(
-        self, manager_with_approaches: "LessonsManager"
+    def test_handoff_archive_appends_to_existing(
+        self, manager_with_handoffs: "LessonsManager"
     ):
         """Multiple archives should append to the same file."""
-        manager_with_approaches.approach_archive("A001")
-        manager_with_approaches.approach_archive("A002")
+        manager_with_handoffs.handoff_archive("hf-0000001")
+        manager_with_handoffs.handoff_archive("hf-0000002")
 
-        archive_file = manager_with_approaches.project_handoffs_archive
+        archive_file = manager_with_handoffs.project_handoffs_archive
         content = archive_file.read_text()
 
-        assert "A001" in content
-        assert "A002" in content
+        assert "hf-0000001" in content
+        assert "hf-0000002" in content
         assert "Implementing WebSocket reconnection" in content
         assert "Refactoring database layer" in content
 
@@ -538,34 +538,34 @@ class TestHandoffArchive:
 class TestHandoffDelete:
     """Tests for deleting handoffs."""
 
-    def test_approach_delete_removes_entry(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_delete_removes_entry(self, manager_with_handoffs: "LessonsManager"):
         """Deleting should remove the approach entirely."""
-        manager_with_approaches.approach_delete("A001")
+        manager_with_handoffs.handoff_delete("hf-0000001")
 
-        approach = manager_with_approaches.approach_get("A001")
-        assert approach is None
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff is None
 
         # Should not be in the list
-        approaches = manager_with_approaches.approach_list()
-        ids = [a.id for a in approaches]
-        assert "A001" not in ids
+        handoffs = manager_with_handoffs.handoff_list()
+        ids = [a.id for a in handoffs]
+        assert "hf-0000001" not in ids
 
-    def test_approach_delete_nonexistent_fails(self, manager: "LessonsManager"):
-        """Deleting a nonexistent approach should raise an error."""
+    def test_handoff_delete_nonexistent_fails(self, manager: "LessonsManager"):
+        """Deleting a nonexistent handoff should raise an error."""
         with pytest.raises(ValueError, match="not found"):
-            manager.approach_delete("A999")
+            manager.handoff_delete("A999")
 
-    def test_approach_delete_does_not_archive(
-        self, manager_with_approaches: "LessonsManager"
+    def test_handoff_delete_does_not_archive(
+        self, manager_with_handoffs: "LessonsManager"
     ):
         """Deleting should not move to archive (unlike archive)."""
-        manager_with_approaches.approach_delete("A001")
+        manager_with_handoffs.handoff_delete("hf-0000001")
 
-        archive_file = manager_with_approaches.project_handoffs_archive
+        archive_file = manager_with_handoffs.project_handoffs_archive
         # Archive file should not exist or not contain the deleted approach
         if archive_file.exists():
             content = archive_file.read_text()
-            assert "A001" not in content
+            assert "hf-0000001" not in content
 
 
 # =============================================================================
@@ -576,103 +576,103 @@ class TestHandoffDelete:
 class TestHandoffGet:
     """Tests for getting individual handoffs."""
 
-    def test_approach_get_existing(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_get_existing(self, manager_with_handoffs: "LessonsManager"):
         """Should return the approach with correct data."""
-        approach = manager_with_approaches.approach_get("A001")
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
 
-        assert approach is not None
-        assert approach.id == "A001"
-        assert approach.title == "Implementing WebSocket reconnection"
-        assert approach.description == "Add automatic reconnection with exponential backoff"
-        assert approach.files == ["src/websocket.ts", "src/connection-manager.ts"]
+        assert handoff is not None
+        assert handoff.id == "hf-0000001"
+        assert handoff.title == "Implementing WebSocket reconnection"
+        assert handoff.description == "Add automatic reconnection with exponential backoff"
+        assert handoff.files == ["src/websocket.ts", "src/connection-manager.ts"]
 
-    def test_approach_get_nonexistent(self, manager: "LessonsManager"):
-        """Should return None for nonexistent approach."""
-        approach = manager.approach_get("A999")
-        assert approach is None
+    def test_handoff_get_nonexistent(self, manager: "LessonsManager"):
+        """Should return None for nonexistent handoff."""
+        handoff = manager.handoff_get("A999")
+        assert handoff is None
 
-    def test_approach_get_returns_approach_dataclass(
-        self, manager_with_approaches: "LessonsManager"
+    def test_handoff_get_returns_handoff_dataclass(
+        self, manager_with_handoffs: "LessonsManager"
     ):
         """Should return an Approach dataclass instance."""
-        approach = manager_with_approaches.approach_get("A001")
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
 
-        assert isinstance(approach, Handoff)
-        assert hasattr(approach, "id")
-        assert hasattr(approach, "title")
-        assert hasattr(approach, "status")
-        assert hasattr(approach, "created")
-        assert hasattr(approach, "updated")
-        assert hasattr(approach, "files")
-        assert hasattr(approach, "description")
-        assert hasattr(approach, "tried")
-        assert hasattr(approach, "next_steps")
+        assert isinstance(handoff, Handoff)
+        assert hasattr(handoff, "id")
+        assert hasattr(handoff, "title")
+        assert hasattr(handoff, "status")
+        assert hasattr(handoff, "created")
+        assert hasattr(handoff, "updated")
+        assert hasattr(handoff, "files")
+        assert hasattr(handoff, "description")
+        assert hasattr(handoff, "tried")
+        assert hasattr(handoff, "next_steps")
 
 
 class TestHandoffList:
     """Tests for listing handoffs."""
 
-    def test_approach_list_all(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_list_all(self, manager_with_handoffs: "LessonsManager"):
         """Should list all approaches."""
-        approaches = manager_with_approaches.approach_list()
+        handoffs = manager_with_handoffs.handoff_list()
 
-        assert len(approaches) == 3
-        ids = [a.id for a in approaches]
-        assert "A001" in ids
-        assert "A002" in ids
-        assert "A003" in ids
+        assert len(handoffs) == 3
+        ids = [a.id for a in handoffs]
+        assert "hf-0000001" in ids
+        assert "hf-0000002" in ids
+        assert "hf-0000003" in ids
 
-    def test_approach_list_by_status(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_list_by_status(self, manager_with_handoffs: "LessonsManager"):
         """Should filter by status."""
-        manager_with_approaches.approach_update_status("A001", "in_progress")
-        manager_with_approaches.approach_update_status("A002", "blocked")
+        manager_with_handoffs.handoff_update_status("hf-0000001", "in_progress")
+        manager_with_handoffs.handoff_update_status("hf-0000002", "blocked")
 
-        in_progress = manager_with_approaches.approach_list(status_filter="in_progress")
-        blocked = manager_with_approaches.approach_list(status_filter="blocked")
-        not_started = manager_with_approaches.approach_list(status_filter="not_started")
+        in_progress = manager_with_handoffs.handoff_list(status_filter="in_progress")
+        blocked = manager_with_handoffs.handoff_list(status_filter="blocked")
+        not_started = manager_with_handoffs.handoff_list(status_filter="not_started")
 
         assert len(in_progress) == 1
-        assert in_progress[0].id == "A001"
+        assert in_progress[0].id == "hf-0000001"
 
         assert len(blocked) == 1
-        assert blocked[0].id == "A002"
+        assert blocked[0].id == "hf-0000002"
 
         assert len(not_started) == 1
-        assert not_started[0].id == "A003"
+        assert not_started[0].id == "hf-0000003"
 
-    def test_approach_list_excludes_completed(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_list_excludes_completed(self, manager_with_handoffs: "LessonsManager"):
         """Default list should exclude completed approaches."""
-        manager_with_approaches.approach_update_status("A001", "completed")
+        manager_with_handoffs.handoff_update_status("hf-0000001", "completed")
 
         # Default list (no filter) should exclude completed
-        approaches = manager_with_approaches.approach_list()
-        ids = [a.id for a in approaches]
-        assert "A001" not in ids
-        assert len(approaches) == 2
+        handoffs = manager_with_handoffs.handoff_list()
+        ids = [a.id for a in handoffs]
+        assert "hf-0000001" not in ids
+        assert len(handoffs) == 2
 
-    def test_approach_list_completed_explicit(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_list_completed_explicit(self, manager_with_handoffs: "LessonsManager"):
         """Should be able to explicitly list completed approaches."""
-        manager_with_approaches.approach_update_status("A001", "completed")
+        manager_with_handoffs.handoff_update_status("hf-0000001", "completed")
 
-        completed = manager_with_approaches.approach_list(status_filter="completed")
+        completed = manager_with_handoffs.handoff_list(status_filter="completed")
 
         assert len(completed) == 1
-        assert completed[0].id == "A001"
+        assert completed[0].id == "hf-0000001"
 
-    def test_approach_list_empty(self, manager: "LessonsManager"):
+    def test_handoff_list_empty(self, manager: "LessonsManager"):
         """Should return empty list when no approaches exist."""
-        approaches = manager.approach_list()
-        assert approaches == []
+        handoffs = manager.handoff_list()
+        assert handoffs == []
 
 
 class TestHandoffInject:
     """Tests for context injection."""
 
-    def test_approach_inject_active_only(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_inject_active_only(self, manager_with_handoffs: "LessonsManager"):
         """Inject should show completed approaches in Recent Completions, not Active."""
-        manager_with_approaches.approach_update_status("A001", "completed")
+        manager_with_handoffs.handoff_update_status("hf-0000001", "completed")
 
-        injected = manager_with_approaches.approach_inject()
+        injected = manager_with_handoffs.handoff_inject()
 
         # Split by sections to verify placement
         assert "## Active Handoffs" in injected
@@ -681,53 +681,75 @@ class TestHandoffInject:
         active_section = injected.split("## Recent Completions")[0]
         completions_section = injected.split("## Recent Completions")[1]
 
-        # A001 should be in completions, not active
-        assert "A001" not in active_section
-        assert "A001" in completions_section
+        # hf-0000001 should be in completions, not active
+        assert "hf-0000001" not in active_section
+        assert "hf-0000001" in completions_section
 
-        # A002 and A003 should be in active
-        assert "A002" in active_section
-        assert "A003" in active_section
+        # hf-0000002 and hf-0000003 should be in active
+        assert "hf-0000002" in active_section
+        assert "hf-0000003" in active_section
 
-    def test_approach_inject_format(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_inject_format(self, manager_with_handoffs: "LessonsManager"):
         """Inject should return formatted string for context."""
-        manager_with_approaches.approach_update_status("A001", "in_progress")
-        manager_with_approaches.approach_add_tried("A001", "fail", "First attempt failed")
-        manager_with_approaches.approach_update_next("A001", "Try a different approach")
+        manager_with_handoffs.handoff_update_status("hf-0000001", "in_progress")
+        manager_with_handoffs.handoff_add_tried("hf-0000001", "fail", "First attempt failed")
+        manager_with_handoffs.handoff_update_next("hf-0000001", "Try a different approach")
 
-        injected = manager_with_approaches.approach_inject()
+        injected = manager_with_handoffs.handoff_inject()
 
         # Should be a non-empty string
         assert isinstance(injected, str)
         assert len(injected) > 0
 
         # Should contain key information
-        assert "A001" in injected
+        assert "hf-0000001" in injected
         assert "Implementing WebSocket reconnection" in injected
         assert "in_progress" in injected.lower()
 
-    def test_approach_inject_empty_returns_empty(self, manager: "LessonsManager"):
-        """Inject with no approaches should return empty string."""
-        injected = manager.approach_inject()
+    def test_handoff_inject_empty_returns_empty(self, manager: "LessonsManager"):
+        """Inject with no handoffs should return empty string."""
+        injected = manager.handoff_inject()
         assert injected == ""
 
-    def test_approach_inject_includes_tried(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_inject_includes_tried(self, manager_with_handoffs: "LessonsManager"):
         """Inject should include tried approaches."""
-        manager_with_approaches.approach_add_tried("A001", "fail", "First failed")
-        manager_with_approaches.approach_add_tried("A001", "success", "This worked")
+        manager_with_handoffs.handoff_add_tried("hf-0000001", "fail", "First failed")
+        manager_with_handoffs.handoff_add_tried("hf-0000001", "success", "This worked")
 
-        injected = manager_with_approaches.approach_inject()
+        injected = manager_with_handoffs.handoff_inject()
 
         assert "First failed" in injected or "fail" in injected.lower()
         assert "This worked" in injected or "success" in injected.lower()
 
-    def test_approach_inject_includes_next_steps(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_inject_includes_next_steps(self, manager_with_handoffs: "LessonsManager"):
         """Inject should include next steps."""
-        manager_with_approaches.approach_update_next("A001", "Write more tests")
+        manager_with_handoffs.handoff_update_next("hf-0000001", "Write more tests")
 
-        injected = manager_with_approaches.approach_inject()
+        injected = manager_with_handoffs.handoff_inject()
 
         assert "Write more tests" in injected
+
+    def test_handoff_inject_ready_for_review_shows_full_tried_steps(self, manager: "LessonsManager"):
+        """Inject should show ALL tried steps for ready_for_review handoffs (for lesson extraction)."""
+        handoff_id = manager.handoff_add("Completed work")
+        manager.handoff_add_tried(handoff_id, "success", "Step 1: Did first thing")
+        manager.handoff_add_tried(handoff_id, "success", "Step 2: Did second thing")
+        manager.handoff_add_tried(handoff_id, "success", "Step 3: Did third thing")
+        manager.handoff_add_tried(handoff_id, "success", "Step 4: Did fourth thing")
+        manager.handoff_add_tried(handoff_id, "success", "Step 5: Did fifth thing")
+        manager.handoff_update_status(handoff_id, "ready_for_review")
+
+        injected = manager.handoff_inject()
+
+        # Should show all tried steps (not summarized)
+        assert "ready_for_review" in injected
+        assert "Step 1: Did first thing" in injected
+        assert "Step 2: Did second thing" in injected
+        assert "Step 3: Did third thing" in injected
+        assert "Step 4: Did fourth thing" in injected
+        assert "Step 5: Did fifth thing" in injected
+        assert "[success]" in injected
+        assert "5 steps" in injected  # Should show count
 
 
 # =============================================================================
@@ -738,68 +760,68 @@ class TestHandoffInject:
 class TestHandoffEdgeCases:
     """Tests for edge cases and error handling."""
 
-    def test_approach_with_special_characters(self, manager: "LessonsManager"):
+    def test_handoff_with_special_characters(self, manager: "LessonsManager"):
         """Should handle special characters in title and description."""
         title = "Fix the 'bug' in |pipe| handling & more"
         desc = "Handle special chars: <>, [], {}, $var, @annotation"
 
-        approach_id = manager.approach_add(title=title, desc=desc)
+        handoff_id = manager.handoff_add(title=title, desc=desc)
 
-        approach = manager.approach_get(approach_id)
-        assert approach is not None
-        assert approach.title == title
-        assert approach.description == desc
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff is not None
+        assert handoff.title == title
+        assert handoff.description == desc
 
-    def test_approach_with_special_characters_in_tried(self, manager: "LessonsManager"):
+    def test_handoff_with_special_characters_in_tried(self, manager: "LessonsManager"):
         """Should handle special characters in tried descriptions."""
-        approach_id = manager.approach_add(title="Test approach")
-        manager.approach_add_tried(
-            approach_id,
+        handoff_id = manager.handoff_add(title="Test approach")
+        manager.handoff_add_tried(
+            handoff_id,
             outcome="fail",
             description="Used 'quotes' and |pipes| - didn't work",
         )
 
-        approach = manager.approach_get(approach_id)
-        assert len(approach.tried) == 1
-        assert "quotes" in approach.tried[0].description
+        handoff = manager.handoff_get(handoff_id)
+        assert len(handoff.tried) == 1
+        assert "quotes" in handoff.tried[0].description
 
     def test_multiple_approaches(self, manager: "LessonsManager"):
         """Should handle many approaches correctly."""
         created_ids = []
         for i in range(10):
-            id = manager.approach_add(title=f"Approach {i+1}")
+            id = manager.handoff_add(title=f"Approach {i+1}")
             created_ids.append(id)
 
-        approaches = manager.approach_list()
-        assert len(approaches) == 10
+        handoffs = manager.handoff_list()
+        assert len(handoffs) == 10
 
         # All IDs should be hash-based and unique
-        ids = [a.id for a in approaches]
+        ids = [a.id for a in handoffs]
         assert all(id.startswith("hf-") for id in ids)
         assert len(set(ids)) == 10  # All unique
 
-    def test_approach_empty_file(self, manager: "LessonsManager"):
+    def test_handoff_empty_file(self, manager: "LessonsManager"):
         """Should handle empty approaches file gracefully."""
-        approaches_file = manager.project_handoffs_file
-        approaches_file.parent.mkdir(parents=True, exist_ok=True)
-        approaches_file.write_text("")
+        handoffs_file = manager.project_handoffs_file
+        handoffs_file.parent.mkdir(parents=True, exist_ok=True)
+        handoffs_file.write_text("")
 
-        approaches = manager.approach_list()
-        assert approaches == []
+        handoffs = manager.handoff_list()
+        assert handoffs == []
 
-    def test_approach_malformed_entry_skipped(self, manager: "LessonsManager"):
+    def test_handoff_malformed_entry_skipped(self, manager: "LessonsManager"):
         """Should skip malformed entries without crashing."""
-        approaches_file = manager.project_handoffs_file
-        approaches_file.parent.mkdir(parents=True, exist_ok=True)
+        handoffs_file = manager.project_handoffs_file
+        handoffs_file.parent.mkdir(parents=True, exist_ok=True)
 
         malformed = """# APPROACHES.md - Active Work Tracking
 
 ## Active Approaches
 
-### [A001] Malformed entry
+### [hf-0000001] Malformed entry
 Missing the status line
 
-### [A002] Valid approach
+### [hf-0000002] Valid approach
 - **Status**: not_started | **Created**: 2025-12-28 | **Updated**: 2025-12-28
 - **Files**:
 - **Description**: This one is valid
@@ -810,53 +832,53 @@ Missing the status line
 
 ---
 """
-        approaches_file.write_text(malformed)
+        handoffs_file.write_text(malformed)
 
-        approaches = manager.approach_list()
+        handoffs = manager.handoff_list()
         # Should only get the valid approach
-        assert len(approaches) == 1
-        assert approaches[0].id == "A002"
+        assert len(handoffs) == 1
+        assert handoffs[0].id == "hf-0000002"
 
-    def test_approach_id_uniqueness_with_hash(self, manager: "LessonsManager"):
+    def test_handoff_id_uniqueness_with_hash(self, manager: "LessonsManager"):
         """Hash-based IDs should always be unique regardless of deletion."""
-        id1 = manager.approach_add(title="First")
-        id2 = manager.approach_add(title="Second")
-        manager.approach_delete(id1)
+        id1 = manager.handoff_add(title="First")
+        id2 = manager.handoff_add(title="Second")
+        manager.handoff_delete(id1)
 
-        # New approach should get a unique hash ID
-        new_id = manager.approach_add(title="Third")
+        # New handoff should get a unique hash ID
+        new_id = manager.handoff_add(title="Third")
         assert new_id.startswith("hf-")
         assert new_id != id1  # Should not reuse deleted ID
         assert new_id != id2  # Should be distinct from existing
 
-    def test_approach_with_long_description(self, manager: "LessonsManager"):
+    def test_handoff_with_long_description(self, manager: "LessonsManager"):
         """Should handle long descriptions."""
         long_desc = "A" * 1000
-        approach_id = manager.approach_add(title="Long desc test", desc=long_desc)
+        handoff_id = manager.handoff_add(title="Long desc test", desc=long_desc)
 
-        approach = manager.approach_get(approach_id)
-        assert approach.description == long_desc
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.description == long_desc
 
-    def test_approach_with_unicode_characters(self, manager: "LessonsManager"):
+    def test_handoff_with_unicode_characters(self, manager: "LessonsManager"):
         """Should handle unicode characters."""
         title = "Fix emoji handling: \U0001f916 \U0001f4bb \U0001f525"
         desc = "Handle international text: \u4e2d\u6587 \u65e5\u672c\u8a9e \ud55c\uad6d\uc5b4"
 
-        approach_id = manager.approach_add(title=title, desc=desc)
+        handoff_id = manager.handoff_add(title=title, desc=desc)
 
-        approach = manager.approach_get(approach_id)
-        assert approach.title == title
-        assert approach.description == desc
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.title == title
+        assert handoff.description == desc
 
-    def test_approach_tried_preserves_order(self, manager: "LessonsManager"):
-        """Tried approaches should maintain insertion order."""
-        approach_id = manager.approach_add(title="Order test")
+    def test_handoff_tried_preserves_order(self, manager: "LessonsManager"):
+        """Tried handoffs should maintain insertion order."""
+        handoff_id = manager.handoff_add(title="Order test")
 
         for i in range(5):
-            manager.approach_add_tried(approach_id, "fail", f"Attempt {i+1}")
+            manager.handoff_add_tried(handoff_id, "fail", f"Attempt {i+1}")
 
-        approach = manager.approach_get(approach_id)
-        for i, tried in enumerate(approach.tried):
+        handoff = manager.handoff_get(handoff_id)
+        for i, tried in enumerate(handoff.tried):
             assert tried.description == f"Attempt {i+1}"
 
 
@@ -868,26 +890,26 @@ Missing the status line
 class TestHandoffDataClasses:
     """Tests for Handoff and TriedStep data classes."""
 
-    def test_approach_dataclass_fields(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_dataclass_fields(self, manager_with_handoffs: "LessonsManager"):
         """Approach should have all required fields."""
-        approach = manager_with_approaches.approach_get("A001")
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
 
-        assert isinstance(approach.id, str)
-        assert isinstance(approach.title, str)
-        assert isinstance(approach.status, str)
-        assert isinstance(approach.created, date)
-        assert isinstance(approach.updated, date)
-        assert isinstance(approach.files, list)
-        assert isinstance(approach.description, str)
-        assert isinstance(approach.tried, list)
-        assert isinstance(approach.next_steps, str)
+        assert isinstance(handoff.id, str)
+        assert isinstance(handoff.title, str)
+        assert isinstance(handoff.status, str)
+        assert isinstance(handoff.created, date)
+        assert isinstance(handoff.updated, date)
+        assert isinstance(handoff.files, list)
+        assert isinstance(handoff.description, str)
+        assert isinstance(handoff.tried, list)
+        assert isinstance(handoff.next_steps, str)
 
-    def test_tried_approach_dataclass_fields(self, manager_with_approaches: "LessonsManager"):
+    def test_tried_handoff_dataclass_fields(self, manager_with_handoffs: "LessonsManager"):
         """TriedApproach should have outcome and description."""
-        manager_with_approaches.approach_add_tried("A001", "success", "It worked")
+        manager_with_handoffs.handoff_add_tried("hf-0000001", "success", "It worked")
 
-        approach = manager_with_approaches.approach_get("A001")
-        tried = approach.tried[0]
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        tried = handoff.tried[0]
 
         assert isinstance(tried, TriedStep)
         assert isinstance(tried.outcome, str)
@@ -902,60 +924,60 @@ class TestHandoffDataClasses:
 class TestHandoffFileFormat:
     """Tests for HANDOFFS.md file format."""
 
-    def test_approach_file_has_header(self, manager: "LessonsManager"):
+    def test_handoff_file_has_header(self, manager: "LessonsManager"):
         """Approaches file should have proper header."""
-        manager.approach_add(title="Test")
+        manager.handoff_add(title="Test")
 
-        approaches_file = manager.project_handoffs_file
-        content = approaches_file.read_text()
+        handoffs_file = manager.project_handoffs_file
+        content = handoffs_file.read_text()
 
         # Accept both new format (HANDOFFS.md) and legacy (APPROACHES.md)
         assert "HANDOFFS.md" in content or "APPROACHES.md" in content
         assert "Active Work Tracking" in content or "Active Handoffs" in content
 
-    def test_approach_format_includes_separator(self, manager: "LessonsManager"):
-        """Each approach should be followed by separator."""
-        manager.approach_add(title="First")
-        manager.approach_add(title="Second")
+    def test_handoff_format_includes_separator(self, manager: "LessonsManager"):
+        """Each handoff should be followed by separator."""
+        manager.handoff_add(title="First")
+        manager.handoff_add(title="Second")
 
-        approaches_file = manager.project_handoffs_file
-        content = approaches_file.read_text()
+        handoffs_file = manager.project_handoffs_file
+        content = handoffs_file.read_text()
 
         # Should have separator between approaches
         assert "---" in content
 
-    def test_approach_format_includes_status_line(self, manager: "LessonsManager"):
+    def test_handoff_format_includes_status_line(self, manager: "LessonsManager"):
         """Approach should include status/dates line."""
-        approach_id = manager.approach_add(title="Test")
-        manager.approach_update_status(approach_id, "in_progress")
+        handoff_id = manager.handoff_add(title="Test")
+        manager.handoff_update_status(handoff_id, "in_progress")
 
-        approaches_file = manager.project_handoffs_file
-        content = approaches_file.read_text()
+        handoffs_file = manager.project_handoffs_file
+        content = handoffs_file.read_text()
 
         assert "**Status**:" in content
         assert "**Created**:" in content
         assert "**Updated**:" in content
         assert "in_progress" in content
 
-    def test_approach_format_includes_tried_section(self, manager: "LessonsManager"):
+    def test_handoff_format_includes_tried_section(self, manager: "LessonsManager"):
         """Approach should include Tried section."""
-        approach_id = manager.approach_add(title="Test")
-        manager.approach_add_tried(approach_id, "fail", "First attempt")
+        handoff_id = manager.handoff_add(title="Test")
+        manager.handoff_add_tried(handoff_id, "fail", "First attempt")
 
-        approaches_file = manager.project_handoffs_file
-        content = approaches_file.read_text()
+        handoffs_file = manager.project_handoffs_file
+        content = handoffs_file.read_text()
 
         assert "**Tried**:" in content
         assert "[fail]" in content.lower() or "fail" in content.lower()
         assert "First attempt" in content
 
-    def test_approach_format_includes_next_section(self, manager: "LessonsManager"):
+    def test_handoff_format_includes_next_section(self, manager: "LessonsManager"):
         """Approach should include Next section."""
-        approach_id = manager.approach_add(title="Test")
-        manager.approach_update_next(approach_id, "Do something next")
+        handoff_id = manager.handoff_add(title="Test")
+        manager.handoff_update_next(handoff_id, "Do something next")
 
-        approaches_file = manager.project_handoffs_file
-        content = approaches_file.read_text()
+        handoffs_file = manager.project_handoffs_file
+        content = handoffs_file.read_text()
 
         assert "**Next**:" in content
         assert "Do something next" in content
@@ -969,77 +991,77 @@ class TestHandoffFileFormat:
 class TestHandoffPhase:
     """Tests for handoff phase tracking."""
 
-    def test_approach_add_defaults_to_research_phase(self, manager: "LessonsManager"):
-        """New approaches should default to 'research' phase."""
-        approach_id = manager.approach_add(title="Test approach")
-        approach = manager.approach_get(approach_id)
+    def test_handoff_add_defaults_to_research_phase(self, manager: "LessonsManager"):
+        """New handoffs should default to 'research' phase."""
+        handoff_id = manager.handoff_add(title="Test approach")
+        handoff = manager.handoff_get(handoff_id)
 
-        assert approach is not None
-        assert hasattr(approach, "phase")
-        assert approach.phase == "research"
+        assert handoff is not None
+        assert hasattr(handoff, "phase")
+        assert handoff.phase == "research"
 
-    def test_approach_add_with_explicit_phase(self, manager: "LessonsManager"):
-        """Should allow setting phase when adding approach."""
-        approach_id = manager.approach_add(title="Planning task", phase="planning")
-        approach = manager.approach_get(approach_id)
+    def test_handoff_add_with_explicit_phase(self, manager: "LessonsManager"):
+        """Should allow setting phase when adding handoff."""
+        handoff_id = manager.handoff_add(title="Planning task", phase="planning")
+        handoff = manager.handoff_get(handoff_id)
 
-        assert approach is not None
-        assert approach.phase == "planning"
+        assert handoff is not None
+        assert handoff.phase == "planning"
 
-    def test_approach_update_phase_valid(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_update_phase_valid(self, manager_with_handoffs: "LessonsManager"):
         """Should update phase with valid values."""
         # Test all valid phases
         valid_phases = ["research", "planning", "implementing", "review"]
 
         for phase in valid_phases:
-            manager_with_approaches.approach_update_phase("A001", phase)
-            approach = manager_with_approaches.approach_get("A001")
-            assert approach.phase == phase
+            manager_with_handoffs.handoff_update_phase("hf-0000001", phase)
+            handoff = manager_with_handoffs.handoff_get("hf-0000001")
+            assert handoff.phase == phase
 
-    def test_approach_update_phase_invalid_rejects(
-        self, manager_with_approaches: "LessonsManager"
+    def test_handoff_update_phase_invalid_rejects(
+        self, manager_with_handoffs: "LessonsManager"
     ):
         """Should reject invalid phase values."""
         with pytest.raises(ValueError, match="[Ii]nvalid phase"):
-            manager_with_approaches.approach_update_phase("A001", "coding")
+            manager_with_handoffs.handoff_update_phase("hf-0000001", "coding")
 
         with pytest.raises(ValueError, match="[Ii]nvalid phase"):
-            manager_with_approaches.approach_update_phase("A001", "testing")
+            manager_with_handoffs.handoff_update_phase("hf-0000001", "testing")
 
         with pytest.raises(ValueError, match="[Ii]nvalid phase"):
-            manager_with_approaches.approach_update_phase("A001", "")
+            manager_with_handoffs.handoff_update_phase("hf-0000001", "")
 
-    def test_approach_phase_in_inject_output(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_phase_in_inject_output(self, manager_with_handoffs: "LessonsManager"):
         """Phase should appear in inject output."""
-        manager_with_approaches.approach_update_phase("A001", "implementing")
+        manager_with_handoffs.handoff_update_phase("hf-0000001", "implementing")
 
-        injected = manager_with_approaches.approach_inject()
+        injected = manager_with_handoffs.handoff_inject()
 
         assert "implementing" in injected.lower()
 
-    def test_approach_get_includes_phase(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_get_includes_phase(self, manager_with_handoffs: "LessonsManager"):
         """Approach dataclass should include phase field."""
-        manager_with_approaches.approach_update_phase("A001", "review")
+        manager_with_handoffs.handoff_update_phase("hf-0000001", "review")
 
-        approach = manager_with_approaches.approach_get("A001")
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
 
-        assert hasattr(approach, "phase")
-        assert isinstance(approach.phase, str)
-        assert approach.phase == "review"
+        assert hasattr(handoff, "phase")
+        assert isinstance(handoff.phase, str)
+        assert handoff.phase == "review"
 
-    def test_approach_update_phase_nonexistent_fails(self, manager: "LessonsManager"):
-        """Should fail when updating phase of nonexistent approach."""
+    def test_handoff_update_phase_nonexistent_fails(self, manager: "LessonsManager"):
+        """Should fail when updating phase of nonexistent handoff."""
         with pytest.raises(ValueError, match="not found"):
-            manager.approach_update_phase("A999", "research")
+            manager.handoff_update_phase("A999", "research")
 
-    def test_approach_update_phase_sets_updated_date(
-        self, manager_with_approaches: "LessonsManager"
+    def test_handoff_update_phase_sets_updated_date(
+        self, manager_with_handoffs: "LessonsManager"
     ):
         """Updating phase should update the 'updated' date."""
-        manager_with_approaches.approach_update_phase("A001", "implementing")
+        manager_with_handoffs.handoff_update_phase("hf-0000001", "implementing")
 
-        approach = manager_with_approaches.approach_get("A001")
-        assert approach.updated == date.today()
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.updated == date.today()
 
 
 # =============================================================================
@@ -1050,81 +1072,81 @@ class TestHandoffPhase:
 class TestHandoffAgent:
     """Tests for handoff agent tracking."""
 
-    def test_approach_add_defaults_to_user_agent(self, manager: "LessonsManager"):
-        """New approaches should default to 'user' agent (no subagent)."""
-        approach_id = manager.approach_add(title="Test approach")
-        approach = manager.approach_get(approach_id)
+    def test_handoff_add_defaults_to_user_agent(self, manager: "LessonsManager"):
+        """New handoffs should default to 'user' agent (no subagent)."""
+        handoff_id = manager.handoff_add(title="Test approach")
+        handoff = manager.handoff_get(handoff_id)
 
-        assert approach is not None
-        assert hasattr(approach, "agent")
-        assert approach.agent == "user"
+        assert handoff is not None
+        assert hasattr(handoff, "agent")
+        assert handoff.agent == "user"
 
-    def test_approach_add_with_explicit_agent(self, manager: "LessonsManager"):
-        """Should allow setting agent when adding approach."""
-        approach_id = manager.approach_add(title="Exploration task", agent="explore")
-        approach = manager.approach_get(approach_id)
+    def test_handoff_add_with_explicit_agent(self, manager: "LessonsManager"):
+        """Should allow setting agent when adding handoff."""
+        handoff_id = manager.handoff_add(title="Exploration task", agent="explore")
+        handoff = manager.handoff_get(handoff_id)
 
-        assert approach is not None
-        assert approach.agent == "explore"
+        assert handoff is not None
+        assert handoff.agent == "explore"
 
-    def test_approach_update_agent(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_update_agent(self, manager_with_handoffs: "LessonsManager"):
         """Should update agent with valid values."""
         # Test all valid agents
         valid_agents = ["explore", "general-purpose", "plan", "review", "user"]
 
         for agent in valid_agents:
-            manager_with_approaches.approach_update_agent("A001", agent)
-            approach = manager_with_approaches.approach_get("A001")
-            assert approach.agent == agent
+            manager_with_handoffs.handoff_update_agent("hf-0000001", agent)
+            handoff = manager_with_handoffs.handoff_get("hf-0000001")
+            assert handoff.agent == agent
 
-    def test_approach_update_agent_invalid_rejects(
-        self, manager_with_approaches: "LessonsManager"
+    def test_handoff_update_agent_invalid_rejects(
+        self, manager_with_handoffs: "LessonsManager"
     ):
         """Should reject invalid agent values."""
         with pytest.raises(ValueError, match="[Ii]nvalid agent"):
-            manager_with_approaches.approach_update_agent("A001", "coder")
+            manager_with_handoffs.handoff_update_agent("hf-0000001", "coder")
 
         with pytest.raises(ValueError, match="[Ii]nvalid agent"):
-            manager_with_approaches.approach_update_agent("A001", "assistant")
+            manager_with_handoffs.handoff_update_agent("hf-0000001", "assistant")
 
         with pytest.raises(ValueError, match="[Ii]nvalid agent"):
-            manager_with_approaches.approach_update_agent("A001", "")
+            manager_with_handoffs.handoff_update_agent("hf-0000001", "")
 
-    def test_approach_agent_stored_but_not_injected(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_agent_stored_but_not_injected(self, manager_with_handoffs: "LessonsManager"):
         """Agent is stored but not shown in compact inject output (by design)."""
-        manager_with_approaches.approach_update_agent("A001", "general-purpose")
+        manager_with_handoffs.handoff_update_agent("hf-0000001", "general-purpose")
 
         # Agent is stored
-        approach = manager_with_approaches.approach_get("A001")
-        assert approach.agent == "general-purpose"
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.agent == "general-purpose"
 
         # But not in compact inject output (too verbose)
-        injected = manager_with_approaches.approach_inject()
+        injected = manager_with_handoffs.handoff_inject()
         assert "Agent" not in injected  # Removed for compactness
 
-    def test_approach_get_includes_agent(self, manager_with_approaches: "LessonsManager"):
+    def test_handoff_get_includes_agent(self, manager_with_handoffs: "LessonsManager"):
         """Approach dataclass should include agent field."""
-        manager_with_approaches.approach_update_agent("A001", "explore")
+        manager_with_handoffs.handoff_update_agent("hf-0000001", "explore")
 
-        approach = manager_with_approaches.approach_get("A001")
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
 
-        assert hasattr(approach, "agent")
-        assert isinstance(approach.agent, str)
-        assert approach.agent == "explore"
+        assert hasattr(handoff, "agent")
+        assert isinstance(handoff.agent, str)
+        assert handoff.agent == "explore"
 
-    def test_approach_update_agent_nonexistent_fails(self, manager: "LessonsManager"):
-        """Should fail when updating agent of nonexistent approach."""
+    def test_handoff_update_agent_nonexistent_fails(self, manager: "LessonsManager"):
+        """Should fail when updating agent of nonexistent handoff."""
         with pytest.raises(ValueError, match="not found"):
-            manager.approach_update_agent("A999", "explore")
+            manager.handoff_update_agent("A999", "explore")
 
-    def test_approach_update_agent_sets_updated_date(
-        self, manager_with_approaches: "LessonsManager"
+    def test_handoff_update_agent_sets_updated_date(
+        self, manager_with_handoffs: "LessonsManager"
     ):
         """Updating agent should update the 'updated' date."""
-        manager_with_approaches.approach_update_agent("A001", "review")
+        manager_with_handoffs.handoff_update_agent("hf-0000001", "review")
 
-        approach = manager_with_approaches.approach_get("A001")
-        assert approach.updated == date.today()
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.updated == date.today()
 
 
 # =============================================================================
@@ -1135,31 +1157,31 @@ class TestHandoffAgent:
 class TestHandoffPhaseAgentFormat:
     """Tests for phase and agent in file format."""
 
-    def test_approach_format_includes_phase(self, manager: "LessonsManager"):
+    def test_handoff_format_includes_phase(self, manager: "LessonsManager"):
         """Approach format should include phase in status line."""
-        manager.approach_add(title="Test", phase="implementing")
+        manager.handoff_add(title="Test", phase="implementing")
 
-        approaches_file = manager.project_handoffs_file
-        content = approaches_file.read_text()
+        handoffs_file = manager.project_handoffs_file
+        content = handoffs_file.read_text()
 
         assert "**Phase**:" in content
         assert "implementing" in content
 
-    def test_approach_format_includes_agent(self, manager: "LessonsManager"):
+    def test_handoff_format_includes_agent(self, manager: "LessonsManager"):
         """Approach format should include agent in status line."""
-        manager.approach_add(title="Test", agent="explore")
+        manager.handoff_add(title="Test", agent="explore")
 
-        approaches_file = manager.project_handoffs_file
-        content = approaches_file.read_text()
+        handoffs_file = manager.project_handoffs_file
+        content = handoffs_file.read_text()
 
         assert "**Agent**:" in content
         assert "explore" in content
 
-    def test_approach_parse_new_format_with_phase_agent(self, manager: "LessonsManager"):
+    def test_handoff_parse_new_format_with_phase_agent(self, manager: "LessonsManager"):
         """Should parse the new format with phase and agent correctly."""
         # Write a file with the new format directly
-        approaches_file = manager.project_handoffs_file
-        approaches_file.parent.mkdir(parents=True, exist_ok=True)
+        handoffs_file = manager.project_handoffs_file
+        handoffs_file.parent.mkdir(parents=True, exist_ok=True)
 
         new_format_content = """# APPROACHES.md - Active Work Tracking
 
@@ -1168,7 +1190,7 @@ class TestHandoffPhaseAgentFormat:
 
 ## Active Approaches
 
-### [A001] Test approach with new format
+### [hf-0000001] Test approach with new format
 - **Status**: in_progress | **Phase**: implementing | **Agent**: general-purpose
 - **Created**: 2025-12-28 | **Updated**: 2025-12-28
 - **Files**: test.py
@@ -1180,23 +1202,23 @@ class TestHandoffPhaseAgentFormat:
 
 ---
 """
-        approaches_file.write_text(new_format_content)
+        handoffs_file.write_text(new_format_content)
 
-        approach = manager.approach_get("A001")
+        handoff = manager.handoff_get("hf-0000001")
 
-        assert approach is not None
-        assert approach.status == "in_progress"
-        assert approach.phase == "implementing"
-        assert approach.agent == "general-purpose"
-        assert approach.title == "Test approach with new format"
+        assert handoff is not None
+        assert handoff.status == "in_progress"
+        assert handoff.phase == "implementing"
+        assert handoff.agent == "general-purpose"
+        assert handoff.title == "Test approach with new format"
 
-    def test_approach_format_phase_agent_on_status_line(self, manager: "LessonsManager"):
+    def test_handoff_format_phase_agent_on_status_line(self, manager: "LessonsManager"):
         """Phase and agent should be on the status line after status."""
-        approach_id = manager.approach_add(title="Test format", phase="planning", agent="plan")
-        manager.approach_update_status(approach_id, "in_progress")
+        handoff_id = manager.handoff_add(title="Test format", phase="planning", agent="plan")
+        manager.handoff_update_status(handoff_id, "in_progress")
 
-        approaches_file = manager.project_handoffs_file
-        content = approaches_file.read_text()
+        handoffs_file = manager.project_handoffs_file
+        content = handoffs_file.read_text()
 
         # The format should be:
         # - **Status**: in_progress | **Phase**: planning | **Agent**: plan
@@ -1222,41 +1244,41 @@ class TestHandoffPhaseAgentFormat:
 class TestHandoffCLIPhaseAgent:
     """Tests for phase and agent CLI commands."""
 
-    def test_cli_approach_add_with_phase(self, manager: "LessonsManager"):
-        """CLI should support --phase option when adding approach."""
-        # This tests the approach_add method with phase parameter
-        approach_id = manager.approach_add(
+    def test_cli_handoff_add_with_phase(self, manager: "LessonsManager"):
+        """CLI should support --phase option when adding handoff."""
+        # This tests the handoff_add method with phase parameter
+        handoff_id = manager.handoff_add(
             title="CLI phase test",
             phase="planning",
         )
 
-        approach = manager.approach_get(approach_id)
-        assert approach.phase == "planning"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.phase == "planning"
 
-    def test_cli_approach_add_with_agent(self, manager: "LessonsManager"):
-        """CLI should support --agent option when adding approach."""
-        # This tests the approach_add method with agent parameter
-        approach_id = manager.approach_add(
+    def test_cli_handoff_add_with_agent(self, manager: "LessonsManager"):
+        """CLI should support --agent option when adding handoff."""
+        # This tests the handoff_add method with agent parameter
+        handoff_id = manager.handoff_add(
             title="CLI agent test",
             agent="explore",
         )
 
-        approach = manager.approach_get(approach_id)
-        assert approach.agent == "explore"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.agent == "explore"
 
-    def test_cli_approach_update_phase(self, manager_with_approaches: "LessonsManager"):
-        """CLI should support updating phase via approach_update_phase."""
-        manager_with_approaches.approach_update_phase("A001", "review")
+    def test_cli_handoff_update_phase(self, manager_with_handoffs: "LessonsManager"):
+        """CLI should support updating phase via handoff_update_phase."""
+        manager_with_handoffs.handoff_update_phase("hf-0000001", "review")
 
-        approach = manager_with_approaches.approach_get("A001")
-        assert approach.phase == "review"
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.phase == "review"
 
-    def test_cli_approach_update_agent(self, manager_with_approaches: "LessonsManager"):
-        """CLI should support updating agent via approach_update_agent."""
-        manager_with_approaches.approach_update_agent("A001", "general-purpose")
+    def test_cli_handoff_update_agent(self, manager_with_handoffs: "LessonsManager"):
+        """CLI should support updating agent via handoff_update_agent."""
+        manager_with_handoffs.handoff_update_agent("hf-0000001", "general-purpose")
 
-        approach = manager_with_approaches.approach_get("A001")
-        assert approach.agent == "general-purpose"
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.agent == "general-purpose"
 
 
 # =============================================================================
@@ -1267,11 +1289,11 @@ class TestHandoffCLIPhaseAgent:
 class TestHandoffPhaseAgentEdgeCases:
     """Tests for edge cases with phase and agent."""
 
-    def test_approach_backward_compatibility_no_phase_agent(self, manager: "LessonsManager"):
+    def test_handoff_backward_compatibility_no_phase_agent(self, manager: "LessonsManager"):
         """Should handle old format files without phase/agent fields."""
         # Write a file with the old format (no phase/agent)
-        approaches_file = manager.project_handoffs_file
-        approaches_file.parent.mkdir(parents=True, exist_ok=True)
+        handoffs_file = manager.project_handoffs_file
+        handoffs_file.parent.mkdir(parents=True, exist_ok=True)
 
         old_format_content = """# APPROACHES.md - Active Work Tracking
 
@@ -1280,7 +1302,7 @@ class TestHandoffPhaseAgentEdgeCases:
 
 ## Active Approaches
 
-### [A001] Old format approach
+### [hf-0000001] Old format approach
 - **Status**: in_progress | **Created**: 2025-12-28 | **Updated**: 2025-12-28
 - **Files**: test.py
 - **Description**: Testing backward compatibility
@@ -1292,58 +1314,58 @@ class TestHandoffPhaseAgentEdgeCases:
 
 ---
 """
-        approaches_file.write_text(old_format_content)
+        handoffs_file.write_text(old_format_content)
 
-        approach = manager.approach_get("A001")
+        handoff = manager.handoff_get("hf-0000001")
 
-        assert approach is not None
-        assert approach.status == "in_progress"
+        assert handoff is not None
+        assert handoff.status == "in_progress"
         # Should default to research/user when not present
-        assert approach.phase == "research"
-        assert approach.agent == "user"
+        assert handoff.phase == "research"
+        assert handoff.agent == "user"
 
-    def test_approach_phase_agent_preserved_on_update(
-        self, manager_with_approaches: "LessonsManager"
+    def test_handoff_phase_agent_preserved_on_update(
+        self, manager_with_handoffs: "LessonsManager"
     ):
         """Phase and agent should be preserved when updating other fields."""
-        manager_with_approaches.approach_update_phase("A001", "implementing")
-        manager_with_approaches.approach_update_agent("A001", "general-purpose")
+        manager_with_handoffs.handoff_update_phase("hf-0000001", "implementing")
+        manager_with_handoffs.handoff_update_agent("hf-0000001", "general-purpose")
 
         # Update status
-        manager_with_approaches.approach_update_status("A001", "blocked")
+        manager_with_handoffs.handoff_update_status("hf-0000001", "blocked")
 
-        approach = manager_with_approaches.approach_get("A001")
-        assert approach.phase == "implementing"
-        assert approach.agent == "general-purpose"
-        assert approach.status == "blocked"
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.phase == "implementing"
+        assert handoff.agent == "general-purpose"
+        assert handoff.status == "blocked"
 
-    def test_approach_phase_agent_in_archived_approach(
-        self, manager_with_approaches: "LessonsManager"
+    def test_handoff_phase_agent_in_archived_approach(
+        self, manager_with_handoffs: "LessonsManager"
     ):
-        """Archived approaches should preserve phase and agent."""
-        manager_with_approaches.approach_update_phase("A001", "review")
-        manager_with_approaches.approach_update_agent("A001", "review")
+        """Archived handoffs should preserve phase and agent."""
+        manager_with_handoffs.handoff_update_phase("hf-0000001", "review")
+        manager_with_handoffs.handoff_update_agent("hf-0000001", "review")
 
-        manager_with_approaches.approach_archive("A001")
+        manager_with_handoffs.handoff_archive("hf-0000001")
 
-        archive_file = manager_with_approaches.project_handoffs_archive
+        archive_file = manager_with_handoffs.project_handoffs_archive
         content = archive_file.read_text()
 
         assert "**Phase**: review" in content or "**Phase**:" in content
         assert "**Agent**: review" in content or "**Agent**:" in content
 
-    def test_approach_complete_includes_phase_agent(
-        self, manager_with_approaches: "LessonsManager"
+    def test_handoff_complete_includes_phase_agent(
+        self, manager_with_handoffs: "LessonsManager"
     ):
         """Complete result should include phase and agent info."""
-        manager_with_approaches.approach_update_phase("A001", "implementing")
-        manager_with_approaches.approach_update_agent("A001", "general-purpose")
+        manager_with_handoffs.handoff_update_phase("hf-0000001", "implementing")
+        manager_with_handoffs.handoff_update_agent("hf-0000001", "general-purpose")
 
-        result = manager_with_approaches.approach_complete("A001")
+        result = manager_with_handoffs.handoff_complete("hf-0000001")
 
         # The approach in the result should have phase and agent
-        assert result.approach.phase == "implementing"
-        assert result.approach.agent == "general-purpose"
+        assert result.handoff.phase == "implementing"
+        assert result.handoff.agent == "general-purpose"
 
 
 # =============================================================================
@@ -1354,68 +1376,68 @@ class TestHandoffPhaseAgentEdgeCases:
 class TestHandoffDecayVisibility:
     """Tests for completed handoff visibility rules."""
 
-    def test_approach_list_completed_returns_completed(
-        self, manager_with_approaches: "LessonsManager"
+    def test_handoff_list_completed_returns_completed(
+        self, manager_with_handoffs: "LessonsManager"
     ):
         """Should be able to list completed approaches."""
-        manager_with_approaches.approach_update_status("A001", "completed")
-        manager_with_approaches.approach_update_status("A002", "completed")
+        manager_with_handoffs.handoff_update_status("hf-0000001", "completed")
+        manager_with_handoffs.handoff_update_status("hf-0000002", "completed")
 
-        completed = manager_with_approaches.approach_list_completed()
+        completed = manager_with_handoffs.handoff_list_completed()
 
         assert len(completed) == 2
 
-    def test_approach_list_completed_respects_max_count(
+    def test_handoff_list_completed_respects_max_count(
         self, manager: "LessonsManager"
     ):
         """With all old approaches, max_count limits the result."""
         # Create and complete 5 approaches with old dates
         created_ids = []
         for i in range(5):
-            approach_id = manager.approach_add(title=f"Approach {i}")
-            created_ids.append(approach_id)
-            manager.approach_update_status(approach_id, "completed")
+            handoff_id = manager.handoff_add(title=f"Approach {i}")
+            created_ids.append(handoff_id)
+            manager.handoff_update_status(handoff_id, "completed")
 
         # Make them all old (30 days ago) so only max_count applies
-        approaches_file = manager.project_handoffs_file
-        content = approaches_file.read_text()
+        handoffs_file = manager.project_handoffs_file
+        content = handoffs_file.read_text()
         old_date = (date.today() - timedelta(days=30)).isoformat()
         content = content.replace(
             f"**Updated**: {date.today().isoformat()}",
             f"**Updated**: {old_date}"
         )
-        approaches_file.write_text(content)
+        handoffs_file.write_text(content)
 
         # With max_count=3 and all old, should only return 3 (top N by recency)
-        completed = manager.approach_list_completed(max_count=3, max_age_days=7)
+        completed = manager.handoff_list_completed(max_count=3, max_age_days=7)
 
         assert len(completed) == 3
 
-    def test_approach_list_completed_respects_max_age(
+    def test_handoff_list_completed_respects_max_age(
         self, manager: "LessonsManager"
     ):
         """Should filter out approaches older than max_age_days."""
-        approach_id = manager.approach_add(title="Recent approach")
-        manager.approach_update_status(approach_id, "completed")
+        handoff_id = manager.handoff_add(title="Recent approach")
+        manager.handoff_update_status(handoff_id, "completed")
 
         # Should include recent
-        completed = manager.approach_list_completed(max_age_days=7)
+        completed = manager.handoff_list_completed(max_age_days=7)
         assert len(completed) == 1
 
-    def test_approach_list_completed_hybrid_logic(
+    def test_handoff_list_completed_hybrid_logic(
         self, manager: "LessonsManager"
     ):
         """Should use OR logic: within max_count OR within max_age_days."""
         # Create 5 completed approaches
         created_ids = []
         for i in range(5):
-            approach_id = manager.approach_add(title=f"Approach {i}")
-            created_ids.append(approach_id)
-            manager.approach_update_status(approach_id, "completed")
+            handoff_id = manager.handoff_add(title=f"Approach {i}")
+            created_ids.append(handoff_id)
+            manager.handoff_update_status(handoff_id, "completed")
 
         # Hybrid: max 2 OR within 7 days
         # All are recent, so should get max 2 (the most recent)
-        completed = manager.approach_list_completed(max_count=2, max_age_days=7)
+        completed = manager.handoff_list_completed(max_count=2, max_age_days=7)
 
         # Should get at least 2 (max_count) since all are recent
         assert len(completed) >= 2
@@ -1424,15 +1446,15 @@ class TestHandoffDecayVisibility:
 class TestHandoffInjectWithCompleted:
     """Tests for showing completed handoffs in injection."""
 
-    def test_approach_inject_shows_recent_completions(
+    def test_handoff_inject_shows_recent_completions(
         self, manager: "LessonsManager"
     ):
         """Injection should show recent completions section."""
-        id1 = manager.approach_add(title="Active task")
-        id2 = manager.approach_add(title="Completed task")
-        manager.approach_update_status(id2, "completed")
+        id1 = manager.handoff_add(title="Active task")
+        id2 = manager.handoff_add(title="Completed task")
+        manager.handoff_update_status(id2, "completed")
 
-        output = manager.approach_inject()
+        output = manager.handoff_inject()
 
         # Should show both active and completed sections
         assert "Active" in output or "active" in output
@@ -1440,41 +1462,41 @@ class TestHandoffInjectWithCompleted:
         # Should mention completed or recent
         assert "Completed" in output or "completed" in output or "Recent" in output
 
-    def test_approach_inject_shows_completion_info(
+    def test_handoff_inject_shows_completion_info(
         self, manager: "LessonsManager"
     ):
-        """Completed approaches should show completion metadata."""
-        approach_id = manager.approach_add(title="Finished feature")
-        manager.approach_update_status(approach_id, "completed")
+        """Completed handoffs should show completion metadata."""
+        handoff_id = manager.handoff_add(title="Finished feature")
+        manager.handoff_update_status(handoff_id, "completed")
 
-        output = manager.approach_inject()
+        output = manager.handoff_inject()
 
         # Should indicate it's completed
         assert "✓" in output or "completed" in output.lower()
 
-    def test_approach_inject_hides_old_completions(
+    def test_handoff_inject_hides_old_completions(
         self, manager: "LessonsManager"
     ):
         """Old completed approaches outside top N should not appear."""
         # Create 5 completed approaches
         created_ids = []
         for i in range(5):
-            approach_id = manager.approach_add(title=f"Task {i}")
-            created_ids.append(approach_id)
-            manager.approach_update_status(approach_id, "completed")
+            handoff_id = manager.handoff_add(title=f"Task {i}")
+            created_ids.append(handoff_id)
+            manager.handoff_update_status(handoff_id, "completed")
 
         # Make them all old (30 days ago)
-        approaches_file = manager.project_handoffs_file
-        content = approaches_file.read_text()
+        handoffs_file = manager.project_handoffs_file
+        content = handoffs_file.read_text()
         old_date = (date.today() - timedelta(days=30)).isoformat()
         content = content.replace(
             f"**Updated**: {date.today().isoformat()}",
             f"**Updated**: {old_date}"
         )
-        approaches_file.write_text(content)
+        handoffs_file.write_text(content)
 
         # With max_completed=2 and all old (same date), only top 2 by file order show
-        output = manager.approach_inject(max_completed=2, max_completed_age=7)
+        output = manager.handoff_inject(max_completed=2, max_completed_age=7)
 
         # Should show only 2 completed approaches (top 2 by stable sort order)
         # Task 3, 4 should not appear (outside top 2 and too old)
@@ -1485,32 +1507,32 @@ class TestHandoffInjectWithCompleted:
 class TestHandoffAutoArchive:
     """Tests for auto-archiving after lesson extraction."""
 
-    def test_approach_complete_with_lessons_extracted(
+    def test_handoff_complete_with_lessons_extracted(
         self, manager: "LessonsManager"
     ):
         """Complete should track if lessons were extracted."""
-        approach_id = manager.approach_add(title="Feature work")
-        manager.approach_add_tried(approach_id, "success", "Main implementation")
+        handoff_id = manager.handoff_add(title="Feature work")
+        manager.handoff_add_tried(handoff_id, "success", "Main implementation")
 
-        result = manager.approach_complete(approach_id)
+        result = manager.handoff_complete(handoff_id)
 
         # Should return extraction prompt
         assert result.extraction_prompt is not None
         assert "lesson" in result.extraction_prompt.lower()
 
-    def test_approach_archive_after_extraction(
+    def test_handoff_archive_after_extraction(
         self, manager: "LessonsManager"
     ):
         """Should be able to archive after completing."""
-        approach_id = manager.approach_add(title="Feature work")
-        manager.approach_complete(approach_id)
+        handoff_id = manager.handoff_add(title="Feature work")
+        manager.handoff_complete(handoff_id)
 
         # Archive after extraction
-        manager.approach_archive(approach_id)
+        manager.handoff_archive(handoff_id)
 
         # Should no longer appear in active list
-        approaches = manager.approach_list()
-        assert len(approaches) == 0
+        handoffs = manager.handoff_list()
+        assert len(handoffs) == 0
 
         # Should be in archive
         archive_file = manager.project_handoffs_archive
@@ -1524,12 +1546,12 @@ class TestHandoffDecayConstants:
     def test_default_max_completed_count(self, manager: "LessonsManager"):
         """Should have a default max completed count."""
         # The default should be accessible
-        assert hasattr(manager, "APPROACH_MAX_COMPLETED") or True  # Constant or method param
+        assert hasattr(manager, "HANDOFF_MAX_COMPLETED") or True  # Constant or method param
 
     def test_default_max_age_days(self, manager: "LessonsManager"):
         """Should have a default max age for completed approaches."""
         # The default should be accessible
-        assert hasattr(manager, "APPROACH_MAX_AGE_DAYS") or True  # Constant or method param
+        assert hasattr(manager, "HANDOFF_MAX_AGE_DAYS") or True  # Constant or method param
 
 
 # =============================================================================
@@ -1540,98 +1562,98 @@ class TestHandoffDecayConstants:
 class TestPlanModeHandoffCreation:
     """Tests for auto-creating handoffs when entering plan mode."""
 
-    def test_approach_add_from_plan_mode(self, manager: "LessonsManager"):
+    def test_handoff_add_from_plan_mode(self, manager: "LessonsManager"):
         """Should be able to create approach with plan mode context."""
-        approach_id = manager.approach_add(
+        handoff_id = manager.handoff_add(
             title="Implement user authentication",
             phase="research",
             agent="plan",
         )
 
-        approach = manager.approach_get(approach_id)
-        assert approach.title == "Implement user authentication"
-        assert approach.phase == "research"
-        assert approach.agent == "plan"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.title == "Implement user authentication"
+        assert handoff.phase == "research"
+        assert handoff.agent == "plan"
 
-    def test_approach_links_to_plan_file(self, manager: "LessonsManager"):
+    def test_handoff_links_to_plan_file(self, manager: "LessonsManager"):
         """Approach can store plan file path reference."""
-        approach_id = manager.approach_add(
+        handoff_id = manager.handoff_add(
             title="Feature implementation",
             phase="planning",
             desc="Plan file: ~/.claude/plans/test-plan.md",
         )
 
-        approach = manager.approach_get(approach_id)
-        assert "plan" in approach.description.lower()
+        handoff = manager.handoff_get(handoff_id)
+        assert "plan" in handoff.description.lower()
 
-    def test_approach_phase_transition_research_to_planning(
+    def test_handoff_phase_transition_research_to_planning(
         self, manager: "LessonsManager"
     ):
         """Phase should transition from research to planning."""
-        approach_id = manager.approach_add(title="New feature", phase="research")
-        manager.approach_update_phase(approach_id, "planning")
+        handoff_id = manager.handoff_add(title="New feature", phase="research")
+        manager.handoff_update_phase(handoff_id, "planning")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.phase == "planning"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.phase == "planning"
 
-    def test_approach_phase_transition_planning_to_implementing(
+    def test_handoff_phase_transition_planning_to_implementing(
         self, manager: "LessonsManager"
     ):
         """Phase should transition from planning to implementing."""
-        approach_id = manager.approach_add(title="New feature", phase="planning")
-        manager.approach_update_phase(approach_id, "implementing")
+        handoff_id = manager.handoff_add(title="New feature", phase="planning")
+        manager.handoff_update_phase(handoff_id, "implementing")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.phase == "implementing"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.phase == "implementing"
 
 
 class TestHookPhasePatterns:
     """Tests for hook command patterns for phase updates."""
 
-    def test_approach_update_phase_via_hook_pattern(self, manager: "LessonsManager"):
+    def test_handoff_update_phase_via_hook_pattern(self, manager: "LessonsManager"):
         """Should support phase updates from hook patterns."""
-        approach_id = manager.approach_add(title="Test feature")
+        handoff_id = manager.handoff_add(title="Test feature")
 
         # This simulates what the hook would do
-        manager.approach_update_phase(approach_id, "implementing")
+        manager.handoff_update_phase(handoff_id, "implementing")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.phase == "implementing"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.phase == "implementing"
 
     def test_phase_update_preserves_other_fields(
-        self, manager_with_approaches: "LessonsManager"
+        self, manager_with_handoffs: "LessonsManager"
     ):
         """Phase update should not affect other approach fields."""
         # Add some data first
-        manager_with_approaches.approach_add_tried("A001", "fail", "First attempt")
-        manager_with_approaches.approach_update_next("A001", "Try another way")
+        manager_with_handoffs.handoff_add_tried("hf-0000001", "fail", "First attempt")
+        manager_with_handoffs.handoff_update_next("hf-0000001", "Try another way")
 
         # Update phase
-        manager_with_approaches.approach_update_phase("A001", "review")
+        manager_with_handoffs.handoff_update_phase("hf-0000001", "review")
 
-        approach = manager_with_approaches.approach_get("A001")
-        assert approach.phase == "review"
-        assert len(approach.tried) == 1
-        assert approach.next_steps == "Try another way"
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.phase == "review"
+        assert len(handoff.tried) == 1
+        assert handoff.next_steps == "Try another way"
 
     def test_plan_mode_approach_pattern_parsed(self, manager: "LessonsManager"):
-        """PLAN MODE: pattern should work like APPROACH: pattern."""
-        # This tests that the same approach_add mechanism works for plan mode
-        approach_id = manager.approach_add(
+        """PLAN MODE: pattern should work like HANDOFF: pattern."""
+        # This tests that the same handoff_add mechanism works for plan mode
+        handoff_id = manager.handoff_add(
             title="Feature from plan mode",
             phase="research",
         )
 
-        assert approach_id.startswith("hf-")
-        approach = manager.approach_get(approach_id)
-        assert approach.title == "Feature from plan mode"
+        assert handoff_id.startswith("hf-")
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.title == "Feature from plan mode"
 
 
 class TestHookCLIIntegration:
     """Tests for CLI commands that hooks invoke."""
 
-    def test_cli_approach_add_with_phase_and_agent(self, tmp_path):
-        """CLI should support --phase and --agent when adding approach."""
+    def test_cli_handoff_add_with_phase_and_agent(self, tmp_path):
+        """CLI should support --phase and --agent when adding handoff."""
         # Set up environment
         env = os.environ.copy()
         env["PROJECT_DIR"] = str(tmp_path)
@@ -1686,7 +1708,7 @@ class TestHookCLIIntegration:
         assert "hf-" in result.stdout
         assert "Test Start Alias" in result.stdout
 
-    def test_cli_approach_update_phase(self, tmp_path):
+    def test_cli_handoff_update_phase(self, tmp_path):
         """CLI should support --phase in update command."""
         env = os.environ.copy()
         env["PROJECT_DIR"] = str(tmp_path)
@@ -1702,7 +1724,7 @@ class TestHookCLIIntegration:
         # Parse the ID from output (format: "Added approach hf-XXXXXXX: Test")
         import re
         id_match = re.search(r'(hf-[0-9a-f]{7})', add_result.stdout)
-        approach_id = id_match.group(1) if id_match else "hf-unknown"
+        handoff_id = id_match.group(1) if id_match else "hf-unknown"
 
         # Then update the phase
         result = subprocess.run(
@@ -1711,7 +1733,7 @@ class TestHookCLIIntegration:
                 "core/cli.py",
                 "approach",
                 "update",
-                approach_id,
+                handoff_id,
                 "--phase",
                 "implementing",
             ],
@@ -1723,7 +1745,7 @@ class TestHookCLIIntegration:
         assert result.returncode == 0
         assert "phase" in result.stdout.lower()
 
-    def test_cli_approach_update_agent(self, tmp_path):
+    def test_cli_handoff_update_agent(self, tmp_path):
         """CLI should support --agent in update command."""
         env = os.environ.copy()
         env["PROJECT_DIR"] = str(tmp_path)
@@ -1739,7 +1761,7 @@ class TestHookCLIIntegration:
         # Parse the ID from output (format: "Added approach hf-XXXXXXX: Test")
         import re
         id_match = re.search(r'(hf-[0-9a-f]{7})', add_result.stdout)
-        approach_id = id_match.group(1) if id_match else "hf-unknown"
+        handoff_id = id_match.group(1) if id_match else "hf-unknown"
 
         # Then update the agent
         result = subprocess.run(
@@ -1748,7 +1770,7 @@ class TestHookCLIIntegration:
                 "core/cli.py",
                 "approach",
                 "update",
-                approach_id,
+                handoff_id,
                 "--agent",
                 "general-purpose",
             ],
@@ -1776,7 +1798,7 @@ class TestStopHookLastReference:
         state_dir = tmp_path / ".local" / "state" / "claude-recall"
         project_root = tmp_path / "project"
         lessons_base.mkdir(parents=True)
-        state_dir.mkdir(parents=True)
+        state_dir.mkdir(parents=True, exist_ok=True)
         project_root.mkdir(parents=True)
         # Set env var so LessonsManager uses temp state dir
         monkeypatch.setenv("CLAUDE_RECALL_STATE", str(state_dir))
@@ -1801,15 +1823,15 @@ class TestStopHookLastReference:
         return transcript
 
     def test_last_reference_phase_update(self, temp_dirs):
-        """APPROACH UPDATE LAST: phase should update the most recent approach."""
+        """HANDOFF UPDATE LAST: phase should update the most recent handoff."""
         lessons_base, state_dir, project_root = temp_dirs
         hook_path = Path("adapters/claude-code/stop-hook.sh")
         if not hook_path.exists():
             pytest.skip("stop-hook.sh not found")
 
         transcript = self.create_mock_transcript(project_root, [
-            "APPROACH: Test feature",
-            "APPROACH UPDATE LAST: phase implementing",
+            "HANDOFF: Test feature",
+            "HANDOFF UPDATE LAST: phase implementing",
         ])
 
         import json
@@ -1835,22 +1857,22 @@ class TestStopHookLastReference:
 
         from core import LessonsManager
         manager = LessonsManager(lessons_base, project_root)
-        approaches = manager.approach_list()
-        assert len(approaches) == 1
-        approach = approaches[0]
-        assert approach.title == "Test feature"
-        assert approach.phase == "implementing"
+        handoffs = manager.handoff_list()
+        assert len(handoffs) == 1
+        handoff = handoffs[0]
+        assert handoff.title == "Test feature"
+        assert handoff.phase == "implementing"
 
     def test_last_reference_tried_update(self, temp_dirs):
-        """APPROACH UPDATE LAST: tried should update the most recent approach."""
+        """HANDOFF UPDATE LAST: tried should update the most recent handoff."""
         lessons_base, state_dir, project_root = temp_dirs
         hook_path = Path("adapters/claude-code/stop-hook.sh")
         if not hook_path.exists():
             pytest.skip("stop-hook.sh not found")
 
         transcript = self.create_mock_transcript(project_root, [
-            "APPROACH: Another feature",
-            "APPROACH UPDATE LAST: tried success - it worked great",
+            "HANDOFF: Another feature",
+            "HANDOFF UPDATE LAST: tried success - it worked great",
         ])
 
         import json
@@ -1876,24 +1898,24 @@ class TestStopHookLastReference:
 
         from core import LessonsManager
         manager = LessonsManager(lessons_base, project_root)
-        approaches = manager.approach_list()
-        assert len(approaches) == 1
-        approach = approaches[0]
-        assert approach.title == "Another feature"
-        assert len(approach.tried) == 1
-        assert approach.tried[0].outcome == "success"
-        assert "worked great" in approach.tried[0].description
+        handoffs = manager.handoff_list()
+        assert len(handoffs) == 1
+        handoff = handoffs[0]
+        assert handoff.title == "Another feature"
+        assert len(handoff.tried) == 1
+        assert handoff.tried[0].outcome == "success"
+        assert "worked great" in handoff.tried[0].description
 
     def test_last_reference_complete(self, temp_dirs):
-        """APPROACH COMPLETE LAST should complete the most recent approach."""
+        """APPROACH COMPLETE LAST should complete the most recent handoff."""
         lessons_base, state_dir, project_root = temp_dirs
         hook_path = Path("adapters/claude-code/stop-hook.sh")
         if not hook_path.exists():
             pytest.skip("stop-hook.sh not found")
 
         transcript = self.create_mock_transcript(project_root, [
-            "APPROACH: Complete me",
-            "APPROACH COMPLETE LAST",
+            "HANDOFF: Complete me",
+            "HANDOFF COMPLETE LAST",
         ])
 
         import json
@@ -1920,23 +1942,23 @@ class TestStopHookLastReference:
         from core import LessonsManager
         manager = LessonsManager(lessons_base, project_root)
         # Completed approaches are not in the default list
-        completed = manager.approach_list_completed()
+        completed = manager.handoff_list_completed()
         assert len(completed) == 1
-        approach = completed[0]
-        assert approach.title == "Complete me"
-        assert approach.status == "completed"
+        handoff = completed[0]
+        assert handoff.title == "Complete me"
+        assert handoff.status == "completed"
 
     def test_last_tracks_across_multiple_creates(self, temp_dirs):
-        """LAST should track the most recently created approach."""
+        """LAST should track the most recently created handoff."""
         lessons_base, state_dir, project_root = temp_dirs
         hook_path = Path("adapters/claude-code/stop-hook.sh")
         if not hook_path.exists():
             pytest.skip("stop-hook.sh not found")
 
         transcript = self.create_mock_transcript(project_root, [
-            "APPROACH: First approach",
-            "APPROACH: Second approach",
-            "APPROACH UPDATE LAST: phase implementing",
+            "HANDOFF: First approach",
+            "HANDOFF: Second approach",
+            "HANDOFF UPDATE LAST: phase implementing",
         ])
 
         import json
@@ -1962,12 +1984,12 @@ class TestStopHookLastReference:
 
         from core import LessonsManager
         manager = LessonsManager(lessons_base, project_root)
-        approaches = manager.approach_list()
-        assert len(approaches) == 2
+        handoffs = manager.handoff_list()
+        assert len(handoffs) == 2
 
         # Find approaches by title
-        first = next((a for a in approaches if a.title == "First approach"), None)
-        second = next((a for a in approaches if a.title == "Second approach"), None)
+        first = next((a for a in handoffs if a.title == "First approach"), None)
+        second = next((a for a in handoffs if a.title == "Second approach"), None)
 
         assert first is not None
         assert first.phase == "research"  # Not updated
@@ -1984,61 +2006,61 @@ class TestStopHookLastReference:
 class TestHandoffCheckpoint:
     """Test checkpoint field for session handoff."""
 
-    def test_approach_has_checkpoint_field(self, manager: LessonsManager) -> None:
+    def test_handoff_has_checkpoint_field(self, manager: LessonsManager) -> None:
         """Verify Approach dataclass has checkpoint field."""
-        approach_id = manager.approach_add("Test approach")
-        approach = manager.approach_get(approach_id)
+        handoff_id = manager.handoff_add("Test approach")
+        handoff = manager.handoff_get(handoff_id)
 
-        assert hasattr(approach, "checkpoint")
-        assert approach.checkpoint == ""  # Default empty
+        assert hasattr(handoff, "checkpoint")
+        assert handoff.checkpoint == ""  # Default empty
 
-    def test_approach_has_last_session_field(self, manager: LessonsManager) -> None:
+    def test_handoff_has_last_session_field(self, manager: LessonsManager) -> None:
         """Verify Approach dataclass has last_session field."""
-        approach_id = manager.approach_add("Test approach")
-        approach = manager.approach_get(approach_id)
+        handoff_id = manager.handoff_add("Test approach")
+        handoff = manager.handoff_get(handoff_id)
 
-        assert hasattr(approach, "last_session")
-        assert approach.last_session is None  # Default None
+        assert hasattr(handoff, "last_session")
+        assert handoff.last_session is None  # Default None
 
-    def test_approach_update_checkpoint(self, manager: LessonsManager) -> None:
+    def test_handoff_update_checkpoint(self, manager: LessonsManager) -> None:
         """Test updating checkpoint via manager method."""
-        approach_id = manager.approach_add("Test approach")
+        handoff_id = manager.handoff_add("Test approach")
 
-        manager.approach_update_checkpoint(
-            approach_id, "Tests passing, working on UI integration"
+        manager.handoff_update_checkpoint(
+            handoff_id, "Tests passing, working on UI integration"
         )
 
-        approach = manager.approach_get(approach_id)
-        assert approach.checkpoint == "Tests passing, working on UI integration"
-        assert approach.last_session == date.today()
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.checkpoint == "Tests passing, working on UI integration"
+        assert handoff.last_session == date.today()
 
-    def test_approach_update_checkpoint_sets_updated_date(
+    def test_handoff_update_checkpoint_sets_updated_date(
         self, manager: LessonsManager
     ) -> None:
         """Verify update_checkpoint also updates the updated date."""
-        approach_id = manager.approach_add("Test approach")
+        handoff_id = manager.handoff_add("Test approach")
 
-        manager.approach_update_checkpoint(approach_id, "Some progress")
+        manager.handoff_update_checkpoint(handoff_id, "Some progress")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.updated == date.today()
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.updated == date.today()
 
-    def test_approach_update_checkpoint_nonexistent_fails(
+    def test_handoff_update_checkpoint_nonexistent_fails(
         self, manager: LessonsManager
     ) -> None:
         """Test that updating checkpoint for nonexistent approach fails."""
         with pytest.raises(ValueError, match="not found"):
-            manager.approach_update_checkpoint("A999", "Some progress")
+            manager.handoff_update_checkpoint("A999", "Some progress")
 
-    def test_approach_checkpoint_overwrites(self, manager: LessonsManager) -> None:
+    def test_handoff_checkpoint_overwrites(self, manager: LessonsManager) -> None:
         """Test that updating checkpoint overwrites previous value."""
-        approach_id = manager.approach_add("Test approach")
+        handoff_id = manager.handoff_add("Test approach")
 
-        manager.approach_update_checkpoint(approach_id, "First checkpoint")
-        manager.approach_update_checkpoint(approach_id, "Second checkpoint")
+        manager.handoff_update_checkpoint(handoff_id, "First checkpoint")
+        manager.handoff_update_checkpoint(handoff_id, "Second checkpoint")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.checkpoint == "Second checkpoint"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.checkpoint == "Second checkpoint"
 
 
 class TestHandoffCheckpointFormat:
@@ -2046,85 +2068,85 @@ class TestHandoffCheckpointFormat:
 
     def test_checkpoint_formatted_in_markdown(self, manager: LessonsManager) -> None:
         """Verify checkpoint is written to markdown file."""
-        approach_id = manager.approach_add("Test approach")
-        manager.approach_update_checkpoint(approach_id, "Progress summary here")
+        handoff_id = manager.handoff_add("Test approach")
+        manager.handoff_update_checkpoint(handoff_id, "Progress summary here")
 
-        content = manager.project_approaches_file.read_text()
+        content = manager.project_handoffs_file.read_text()
         assert "**Checkpoint**: Progress summary here" in content
 
     def test_last_session_formatted_in_markdown(self, manager: LessonsManager) -> None:
         """Verify last_session is written to markdown file."""
-        approach_id = manager.approach_add("Test approach")
-        manager.approach_update_checkpoint(approach_id, "Progress summary")
+        handoff_id = manager.handoff_add("Test approach")
+        manager.handoff_update_checkpoint(handoff_id, "Progress summary")
 
-        content = manager.project_approaches_file.read_text()
+        content = manager.project_handoffs_file.read_text()
         assert f"**Last Session**: {date.today().isoformat()}" in content
 
     def test_checkpoint_parsed_correctly(self, manager: LessonsManager) -> None:
         """Verify checkpoint is parsed back correctly."""
-        approach_id = manager.approach_add("Test approach")
-        manager.approach_update_checkpoint(approach_id, "Complex checkpoint: tests, UI")
+        handoff_id = manager.handoff_add("Test approach")
+        manager.handoff_update_checkpoint(handoff_id, "Complex checkpoint: tests, UI")
 
         # Force re-parse by getting fresh
-        approach = manager.approach_get(approach_id)
-        assert approach.checkpoint == "Complex checkpoint: tests, UI"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.checkpoint == "Complex checkpoint: tests, UI"
 
     def test_last_session_parsed_correctly(self, manager: LessonsManager) -> None:
         """Verify last_session date is parsed correctly."""
-        approach_id = manager.approach_add("Test approach")
-        manager.approach_update_checkpoint(approach_id, "Progress")
+        handoff_id = manager.handoff_add("Test approach")
+        manager.handoff_update_checkpoint(handoff_id, "Progress")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.last_session == date.today()
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.last_session == date.today()
 
     def test_backward_compatibility_no_checkpoint(
         self, manager: LessonsManager
     ) -> None:
         """Verify approaches without checkpoint field still parse."""
         # Create approach without checkpoint
-        approach_id = manager.approach_add("Legacy approach")
+        handoff_id = manager.handoff_add("Legacy approach")
 
         # Manually write old format without checkpoint
-        content = manager.project_approaches_file.read_text()
+        content = manager.project_handoffs_file.read_text()
         # The file should parse fine - checkpoint defaults to empty
-        approach = manager.approach_get(approach_id)
-        assert approach.checkpoint == ""
-        assert approach.last_session is None
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.checkpoint == ""
+        assert handoff.last_session is None
 
 
 class TestHandoffCheckpointInjection:
     """Test checkpoint in context injection output."""
 
-    def test_approach_inject_shows_checkpoint(self, manager: LessonsManager) -> None:
+    def test_handoff_inject_shows_checkpoint(self, manager: LessonsManager) -> None:
         """Verify inject output includes checkpoint prominently."""
-        approach_id = manager.approach_add("Feature implementation")
-        manager.approach_update_checkpoint(
-            approach_id, "API done, working on frontend"
+        handoff_id = manager.handoff_add("Feature implementation")
+        manager.handoff_update_checkpoint(
+            handoff_id, "API done, working on frontend"
         )
 
-        output = manager.approach_inject()
+        output = manager.handoff_inject()
 
         assert "**Checkpoint" in output
         assert "API done, working on frontend" in output
 
-    def test_approach_inject_shows_checkpoint_age(self, manager: LessonsManager) -> None:
+    def test_handoff_inject_shows_checkpoint_age(self, manager: LessonsManager) -> None:
         """Verify inject output shows how old the checkpoint is."""
-        approach_id = manager.approach_add("Feature implementation")
-        manager.approach_update_checkpoint(approach_id, "Some progress")
+        handoff_id = manager.handoff_add("Feature implementation")
+        manager.handoff_update_checkpoint(handoff_id, "Some progress")
 
-        output = manager.approach_inject()
+        output = manager.handoff_inject()
 
         # Should show "(today)" for same-day checkpoint
         assert "(today)" in output or "Checkpoint" in output
 
-    def test_approach_inject_no_checkpoint_no_display(
+    def test_handoff_inject_no_checkpoint_no_display(
         self, manager: LessonsManager
     ) -> None:
         """Verify inject output doesn't show checkpoint line if empty."""
-        approach_id = manager.approach_add("Feature implementation")
+        handoff_id = manager.handoff_add("Feature implementation")
         # Don't set checkpoint
 
-        output = manager.approach_inject()
+        output = manager.handoff_inject()
 
         # Should not have Checkpoint line
         assert "**Checkpoint" not in output
@@ -2133,7 +2155,7 @@ class TestHandoffCheckpointInjection:
 class TestHandoffCheckpointCLI:
     """Test checkpoint via CLI."""
 
-    def test_cli_approach_update_checkpoint(
+    def test_cli_handoff_update_checkpoint(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Test updating checkpoint via CLI."""
@@ -2167,7 +2189,7 @@ class TestHandoffCheckpointCLI:
 
         # Parse the ID from output (format: "Added approach hf-XXXXXXX: Test")
         id_match = re.search(r'(hf-[0-9a-f]{7})', add_result.stdout)
-        approach_id = id_match.group(1) if id_match else "hf-unknown"
+        handoff_id = id_match.group(1) if id_match else "hf-unknown"
 
         # Update checkpoint
         result = subprocess.run(
@@ -2177,7 +2199,7 @@ class TestHandoffCheckpointCLI:
                 "core.cli",
                 "approach",
                 "update",
-                approach_id,
+                handoff_id,
                 "--checkpoint",
                 "Progress: tests passing",
             ],
@@ -2186,14 +2208,14 @@ class TestHandoffCheckpointCLI:
             cwd=str(repo_root),
         )
         assert result.returncode == 0, result.stderr
-        assert f"Updated {approach_id} checkpoint" in result.stdout
+        assert f"Updated {handoff_id} checkpoint" in result.stdout
 
         # Verify via manager directly
         from core import LessonsManager
 
         manager = LessonsManager(lessons_base, project_root)
-        approach = manager.approach_get(approach_id)
-        assert approach.checkpoint == "Progress: tests passing"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.checkpoint == "Progress: tests passing"
 
 
 class TestHandoffCheckpointPreservation:
@@ -2203,32 +2225,32 @@ class TestHandoffCheckpointPreservation:
         self, manager: LessonsManager
     ) -> None:
         """Verify checkpoint survives status updates."""
-        approach_id = manager.approach_add("Test approach")
-        manager.approach_update_checkpoint(approach_id, "Important checkpoint")
-        manager.approach_update_status(approach_id, "in_progress")
+        handoff_id = manager.handoff_add("Test approach")
+        manager.handoff_update_checkpoint(handoff_id, "Important checkpoint")
+        manager.handoff_update_status(handoff_id, "in_progress")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.checkpoint == "Important checkpoint"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.checkpoint == "Important checkpoint"
 
     def test_checkpoint_preserved_on_tried_add(self, manager: LessonsManager) -> None:
         """Verify checkpoint survives adding tried attempts."""
-        approach_id = manager.approach_add("Test approach")
-        manager.approach_update_checkpoint(approach_id, "Important checkpoint")
-        manager.approach_add_tried(approach_id, "success", "Did something")
+        handoff_id = manager.handoff_add("Test approach")
+        manager.handoff_update_checkpoint(handoff_id, "Important checkpoint")
+        manager.handoff_add_tried(handoff_id, "success", "Did something")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.checkpoint == "Important checkpoint"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.checkpoint == "Important checkpoint"
 
     def test_checkpoint_preserved_on_phase_update(
         self, manager: LessonsManager
     ) -> None:
         """Verify checkpoint survives phase updates."""
-        approach_id = manager.approach_add("Test approach")
-        manager.approach_update_checkpoint(approach_id, "Important checkpoint")
-        manager.approach_update_phase(approach_id, "implementing")
+        handoff_id = manager.handoff_add("Test approach")
+        manager.handoff_update_checkpoint(handoff_id, "Important checkpoint")
+        manager.handoff_update_phase(handoff_id, "implementing")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.checkpoint == "Important checkpoint"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.checkpoint == "Important checkpoint"
 
 
 # =============================================================================
@@ -2246,89 +2268,200 @@ class TestHandoffSyncTodos:
             {"content": "Implement fix", "status": "in_progress", "activeForm": "Implementing"},
         ]
 
-        result = manager.approach_sync_todos(todos)
+        result = manager.handoff_sync_todos(todos)
 
         assert result is not None
-        approach = manager.approach_get(result)
-        assert approach is not None
-        assert "Research patterns" in approach.title
+        handoff = manager.handoff_get(result)
+        assert handoff is not None
+        assert "Research patterns" in handoff.title
 
     def test_sync_updates_existing_approach(self, manager: LessonsManager) -> None:
-        """sync_todos updates most recently updated active approach."""
-        approach_id = manager.approach_add("Existing approach")
+        """sync_todos updates most recently updated active handoff."""
+        handoff_id = manager.handoff_add("Existing approach")
 
         todos = [
             {"content": "Done task", "status": "completed", "activeForm": "Done"},
             {"content": "Current task", "status": "in_progress", "activeForm": "Working"},
         ]
 
-        result = manager.approach_sync_todos(todos)
+        result = manager.handoff_sync_todos(todos)
 
-        assert result == approach_id
+        assert result == handoff_id
 
     def test_sync_completed_to_tried(self, manager: LessonsManager) -> None:
         """Completed todos become tried entries with success outcome."""
-        approach_id = manager.approach_add("Test approach")
+        handoff_id = manager.handoff_add("Test approach")
 
         todos = [
             {"content": "Task A", "status": "completed", "activeForm": "Task A"},
             {"content": "Task B", "status": "completed", "activeForm": "Task B"},
         ]
 
-        manager.approach_sync_todos(todos)
-        approach = manager.approach_get(approach_id)
+        manager.handoff_sync_todos(todos)
+        handoff = manager.handoff_get(handoff_id)
 
-        assert len(approach.tried) == 2
-        assert approach.tried[0].outcome == "success"
-        assert approach.tried[0].description == "Task A"
+        assert len(handoff.tried) == 2
+        assert handoff.tried[0].outcome == "success"
+        assert handoff.tried[0].description == "Task A"
 
     def test_sync_in_progress_to_checkpoint(self, manager: LessonsManager) -> None:
         """In-progress todo becomes checkpoint."""
-        approach_id = manager.approach_add("Test approach")
+        handoff_id = manager.handoff_add("Test approach")
 
         todos = [
             {"content": "Current work", "status": "in_progress", "activeForm": "Working"},
         ]
 
-        manager.approach_sync_todos(todos)
-        approach = manager.approach_get(approach_id)
+        manager.handoff_sync_todos(todos)
+        handoff = manager.handoff_get(handoff_id)
 
-        assert approach.checkpoint == "Current work"
+        assert handoff.checkpoint == "Current work"
 
     def test_sync_pending_to_next_steps(self, manager: LessonsManager) -> None:
         """Pending todos become next_steps."""
-        approach_id = manager.approach_add("Test approach")
+        handoff_id = manager.handoff_add("Test approach")
 
         todos = [
             {"content": "Next A", "status": "pending", "activeForm": "Next A"},
             {"content": "Next B", "status": "pending", "activeForm": "Next B"},
         ]
 
-        manager.approach_sync_todos(todos)
-        approach = manager.approach_get(approach_id)
+        manager.handoff_sync_todos(todos)
+        handoff = manager.handoff_get(handoff_id)
 
-        assert "Next A" in approach.next_steps
-        assert "Next B" in approach.next_steps
+        assert "Next A" in handoff.next_steps
+        assert "Next B" in handoff.next_steps
 
     def test_sync_empty_todos_returns_none(self, manager: LessonsManager) -> None:
         """Empty todo list returns None."""
-        result = manager.approach_sync_todos([])
+        result = manager.handoff_sync_todos([])
         assert result is None
 
     def test_sync_avoids_duplicate_tried(self, manager: LessonsManager) -> None:
         """sync_todos doesn't add duplicate tried entries."""
-        approach_id = manager.approach_add("Test approach")
-        manager.approach_add_tried(approach_id, "success", "Already done")
+        handoff_id = manager.handoff_add("Test approach")
+        manager.handoff_add_tried(handoff_id, "success", "Already done")
 
         todos = [
             {"content": "Already done", "status": "completed", "activeForm": "Done"},
         ]
 
-        manager.approach_sync_todos(todos)
-        approach = manager.approach_get(approach_id)
+        manager.handoff_sync_todos(todos)
+        handoff = manager.handoff_get(handoff_id)
 
         # Should still only have 1 tried entry
-        assert len(approach.tried) == 1
+        assert len(handoff.tried) == 1
+
+    def test_sync_completed_todos_updates_status_to_in_progress(self, manager: LessonsManager) -> None:
+        """Completed todos should move status from not_started to in_progress."""
+        handoff_id = manager.handoff_add("Test approach")
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "not_started"
+
+        todos = [
+            {"content": "Done task", "status": "completed", "activeForm": "Done"},
+            {"content": "Next task", "status": "pending", "activeForm": "Next"},
+        ]
+
+        manager.handoff_sync_todos(todos)
+        handoff = manager.handoff_get(handoff_id)
+
+        # Status should be in_progress because work has been done
+        assert handoff.status == "in_progress"
+
+    def test_sync_all_completed_todos_sets_ready_for_review(self, manager: LessonsManager) -> None:
+        """All completed todos with none pending should set ready_for_review status."""
+        handoff_id = manager.handoff_add("Test approach")
+
+        todos = [
+            {"content": "Task 1", "status": "completed", "activeForm": "Task 1"},
+            {"content": "Task 2", "status": "completed", "activeForm": "Task 2"},
+        ]
+
+        manager.handoff_sync_todos(todos)
+        handoff = manager.handoff_get(handoff_id)
+
+        # All done, should be ready for lesson review (not auto-completed)
+        assert handoff.status == "ready_for_review"
+
+    def test_sync_in_progress_todo_updates_status(self, manager: LessonsManager) -> None:
+        """In progress todo should move status to in_progress."""
+        handoff_id = manager.handoff_add("Test approach")
+
+        todos = [
+            {"content": "Working on it", "status": "in_progress", "activeForm": "Working"},
+        ]
+
+        manager.handoff_sync_todos(todos)
+        handoff = manager.handoff_get(handoff_id)
+
+        assert handoff.status == "in_progress"
+
+    def test_sync_only_pending_todos_stays_not_started(self, manager: LessonsManager) -> None:
+        """Only pending todos should keep status as not_started."""
+        handoff_id = manager.handoff_add("Test approach")
+
+        todos = [
+            {"content": "Future task", "status": "pending", "activeForm": "Future"},
+        ]
+
+        manager.handoff_sync_todos(todos)
+        handoff = manager.handoff_get(handoff_id)
+
+        # No work done yet
+        assert handoff.status == "not_started"
+
+    def test_sync_regression_all_done_must_be_ready_for_review(self, manager: LessonsManager) -> None:
+        """REGRESSION: All completed todos must set status to ready_for_review, not stuck at not_started.
+
+        Bug scenario: User completes all work (15 tasks), but handoff stays at not_started
+        because sync_todos didn't update status when only completed todos existed.
+
+        New behavior: All done → ready_for_review (user reviews for lessons) → HANDOFF COMPLETE → completed
+        """
+        handoff_id = manager.handoff_add("Fix install.sh")
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "not_started"  # Initial state
+
+        # Simulate a full session with all tasks completed
+        todos = [
+            {"content": "Fix install.sh to include _version.py", "status": "completed", "activeForm": "Fixing"},
+            {"content": "Add integration test for installed CLI import", "status": "completed", "activeForm": "Adding"},
+            {"content": "Fix bash tests to isolate CLAUDE_RECALL_STATE", "status": "completed", "activeForm": "Fixing"},
+        ]
+
+        manager.handoff_sync_todos(todos)
+        handoff = manager.handoff_get(handoff_id)
+
+        # CRITICAL: Must be ready_for_review, NOT not_started or in_progress
+        assert handoff.status == "ready_for_review", (
+            f"BUG: Handoff stuck at '{handoff.status}' despite all todos completed. "
+            f"Tried: {[t.description for t in handoff.tried]}"
+        )
+
+    def test_sync_regression_work_done_must_be_in_progress(self, manager: LessonsManager) -> None:
+        """REGRESSION: Completed todos with pending must set status to in_progress.
+
+        Bug scenario: User completes several tasks but more remain, handoff stays not_started.
+        """
+        handoff_id = manager.handoff_add("Multi-step work")
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "not_started"
+
+        todos = [
+            {"content": "First task done", "status": "completed", "activeForm": "First"},
+            {"content": "Second task done", "status": "completed", "activeForm": "Second"},
+            {"content": "Third task pending", "status": "pending", "activeForm": "Third"},
+        ]
+
+        manager.handoff_sync_todos(todos)
+        handoff = manager.handoff_get(handoff_id)
+
+        # CRITICAL: Must be in_progress (work done), NOT not_started
+        assert handoff.status == "in_progress", (
+            f"BUG: Handoff stuck at '{handoff.status}' despite completed work. "
+            f"Tried: {[t.description for t in handoff.tried]}, Next: {handoff.next_steps}"
+        )
 
 
 class TestHandoffInjectTodos:
@@ -2336,17 +2469,17 @@ class TestHandoffInjectTodos:
 
     def test_inject_returns_empty_if_no_active(self, manager: LessonsManager) -> None:
         """inject_todos returns empty string if no active approaches."""
-        result = manager.approach_inject_todos()
+        result = manager.handoff_inject_todos()
         assert result == ""
 
     def test_inject_formats_approach_as_todos(self, manager: LessonsManager) -> None:
         """inject_todos formats approach state as todo list."""
-        approach_id = manager.approach_add("Test approach")
-        manager.approach_add_tried(approach_id, "success", "First task succeeded")
-        manager.approach_update_checkpoint(approach_id, "Current task")
-        manager.approach_update_next(approach_id, "Next task")
+        handoff_id = manager.handoff_add("Test approach")
+        manager.handoff_add_tried(handoff_id, "success", "First task succeeded")
+        manager.handoff_update_checkpoint(handoff_id, "Current task")
+        manager.handoff_update_next(handoff_id, "Next task")
 
-        result = manager.approach_inject_todos()
+        result = manager.handoff_inject_todos()
 
         assert "CONTINUE PREVIOUS WORK" in result
         assert "First task succeeded" in result
@@ -2356,12 +2489,12 @@ class TestHandoffInjectTodos:
 
     def test_inject_shows_status_icons(self, manager: LessonsManager) -> None:
         """inject_todos uses status icons for visual clarity."""
-        approach_id = manager.approach_add("Test approach")
-        manager.approach_add_tried(approach_id, "success", "Succeeded")
-        manager.approach_update_checkpoint(approach_id, "Doing")
-        manager.approach_update_next(approach_id, "Todo")
+        handoff_id = manager.handoff_add("Test approach")
+        manager.handoff_add_tried(handoff_id, "success", "Succeeded")
+        manager.handoff_update_checkpoint(handoff_id, "Doing")
+        manager.handoff_update_next(handoff_id, "Todo")
 
-        result = manager.approach_inject_todos()
+        result = manager.handoff_inject_todos()
 
         assert "✓" in result  # completed
         assert "→" in result  # in_progress
@@ -2371,11 +2504,11 @@ class TestHandoffInjectTodos:
         """inject_todos JSON only includes non-completed todos."""
         import json
 
-        approach_id = manager.approach_add("Test approach")
-        manager.approach_add_tried(approach_id, "success", "Succeeded task")
-        manager.approach_update_checkpoint(approach_id, "Current task")
+        handoff_id = manager.handoff_add("Test approach")
+        manager.handoff_add_tried(handoff_id, "success", "Succeeded task")
+        manager.handoff_update_checkpoint(handoff_id, "Current task")
 
-        result = manager.approach_inject_todos()
+        result = manager.handoff_inject_todos()
 
         # Extract JSON from result
         json_start = result.find("```json\n") + len("```json\n")
@@ -2385,7 +2518,7 @@ class TestHandoffInjectTodos:
 
         # JSON should only have current task, not done task
         assert len(todos) == 1
-        assert f"[{approach_id}] Current task" in todos[0]["content"]
+        assert f"[{handoff_id}] Current task" in todos[0]["content"]
         assert todos[0]["status"] == "in_progress"
 
 
@@ -2402,10 +2535,10 @@ class TestTodoSyncRoundTrip:
             {"content": "Step 2", "status": "in_progress", "activeForm": "Step 2"},
             {"content": "Step 3", "status": "pending", "activeForm": "Step 3"},
         ]
-        approach_id = manager.approach_sync_todos(todos_session1)
+        handoff_id = manager.handoff_sync_todos(todos_session1)
 
         # Simulate session 2: inject todos from approach
-        result = manager.approach_inject_todos()
+        result = manager.handoff_inject_todos()
 
         # Extract and parse JSON
         json_start = result.find("```json\n") + len("```json\n")
@@ -2427,41 +2560,41 @@ class TestTodoSyncRoundTrip:
 class TestStaleHandoffArchival:
     """Tests for auto-archiving stale handoffs."""
 
-    def test_stale_approach_archived_on_inject(self, manager: LessonsManager) -> None:
+    def test_stale_handoff_archived_on_inject(self, manager: LessonsManager) -> None:
         """Approaches untouched for >7 days are auto-archived during inject."""
         from datetime import timedelta
 
         # Create an approach and backdate it to 8 days ago
-        manager.approach_add(title="Old task", desc="Started long ago")
+        manager.handoff_add(title="Old task", desc="Started long ago")
 
         # Manually update the approach's updated date to be stale
-        approaches = manager._parse_approaches_file(manager.project_approaches_file)
-        approaches[0].updated = date.today() - timedelta(days=8)
-        manager._write_approaches_file(approaches)
+        handoffs = manager._parse_handoffs_file(manager.project_handoffs_file)
+        handoffs[0].updated = date.today() - timedelta(days=8)
+        manager._write_handoffs_file(handoffs)
 
         # Inject should auto-archive the stale approach
-        result = manager.approach_inject()
+        result = manager.handoff_inject()
 
         # Should not appear in active approaches
         assert "Old task" not in result or "Auto-archived" in result
 
         # Should be in archive with stale note
-        archive_content = manager.project_approaches_archive.read_text()
+        archive_content = manager.project_handoffs_archive.read_text()
         assert "Old task" in archive_content
         assert "Auto-archived" in archive_content
 
-    def test_approach_exactly_7_days_not_archived(self, manager: LessonsManager) -> None:
+    def test_handoff_exactly_7_days_not_archived(self, manager: LessonsManager) -> None:
         """Approaches exactly 7 days old are NOT archived (need >7 days)."""
         from datetime import timedelta
 
-        manager.approach_add(title="Week old task")
+        manager.handoff_add(title="Week old task")
 
         # Set to exactly 7 days ago
-        approaches = manager._parse_approaches_file(manager.project_approaches_file)
-        approaches[0].updated = date.today() - timedelta(days=7)
-        manager._write_approaches_file(approaches)
+        handoffs = manager._parse_handoffs_file(manager.project_handoffs_file)
+        handoffs[0].updated = date.today() - timedelta(days=7)
+        manager._write_handoffs_file(handoffs)
 
-        result = manager.approach_inject()
+        result = manager.handoff_inject()
 
         # Should still appear in active handoffs
         assert "Week old task" in result
@@ -2471,153 +2604,153 @@ class TestStaleHandoffArchival:
         """Completed approaches are handled by different rules, not stale archival."""
         from datetime import timedelta
 
-        manager.approach_add(title="Finished task")
-        approaches = manager._parse_approaches_file(manager.project_approaches_file)
-        approaches[0].status = "completed"
-        approaches[0].updated = date.today() - timedelta(days=8)
-        manager._write_approaches_file(approaches)
+        manager.handoff_add(title="Finished task")
+        handoffs = manager._parse_handoffs_file(manager.project_handoffs_file)
+        handoffs[0].status = "completed"
+        handoffs[0].updated = date.today() - timedelta(days=8)
+        manager._write_handoffs_file(handoffs)
 
         # This should NOT be archived by stale logic (completed has own rules)
-        archived = manager._archive_stale_approaches()
+        archived = manager._archive_stale_handoffs()
         assert len(archived) == 0
 
     def test_stale_archival_returns_archived_ids(self, manager: LessonsManager) -> None:
-        """_archive_stale_approaches returns list of archived approach IDs."""
+        """_archive_stale_handoffs returns list of archived approach IDs."""
         from datetime import timedelta
 
-        manager.approach_add(title="Stale 1")
-        manager.approach_add(title="Stale 2")
-        manager.approach_add(title="Fresh")
+        manager.handoff_add(title="Stale 1")
+        manager.handoff_add(title="Stale 2")
+        manager.handoff_add(title="Fresh")
 
-        approaches = manager._parse_approaches_file(manager.project_approaches_file)
-        approaches[0].updated = date.today() - timedelta(days=10)
-        approaches[1].updated = date.today() - timedelta(days=8)
-        # approaches[2] stays fresh (today)
-        manager._write_approaches_file(approaches)
+        handoffs = manager._parse_handoffs_file(manager.project_handoffs_file)
+        handoffs[0].updated = date.today() - timedelta(days=10)
+        handoffs[1].updated = date.today() - timedelta(days=8)
+        # handoffs[2] stays fresh (today)
+        manager._write_handoffs_file(handoffs)
 
-        archived = manager._archive_stale_approaches()
+        archived = manager._archive_stale_handoffs()
 
         assert len(archived) == 2
-        assert approaches[0].id in archived
-        assert approaches[1].id in archived
+        assert handoffs[0].id in archived
+        assert handoffs[1].id in archived
 
     def test_no_stale_approaches_no_changes(self, manager: LessonsManager) -> None:
         """When no approaches are stale, files are not modified."""
-        manager.approach_add(title="Fresh task")
+        manager.handoff_add(title="Fresh task")
 
         # Get original content
-        original_content = manager.project_approaches_file.read_text()
+        original_content = manager.project_handoffs_file.read_text()
 
-        archived = manager._archive_stale_approaches()
+        archived = manager._archive_stale_handoffs()
 
         assert len(archived) == 0
         # Archive file should not be created
-        assert not manager.project_approaches_archive.exists()
+        assert not manager.project_handoffs_archive.exists()
         # Main file unchanged (content-wise, though timestamps may differ)
-        assert "Fresh task" in manager.project_approaches_file.read_text()
+        assert "Fresh task" in manager.project_handoffs_file.read_text()
 
 
 class TestCompletedHandoffArchival:
     """Tests for auto-archiving completed handoffs after N days."""
 
-    def test_completed_approach_archived_after_days(self, manager: LessonsManager) -> None:
-        """Completed approaches are archived after APPROACH_COMPLETED_ARCHIVE_DAYS."""
-        from core.models import APPROACH_COMPLETED_ARCHIVE_DAYS
+    def test_completed_handoff_archived_after_days(self, manager: LessonsManager) -> None:
+        """Completed approaches are archived after HANDOFF_COMPLETED_ARCHIVE_DAYS."""
+        from core.models import HANDOFF_COMPLETED_ARCHIVE_DAYS
 
-        approach_id = manager.approach_add(title="Finished work")
-        manager.approach_complete(approach_id)
+        handoff_id = manager.handoff_add(title="Finished work")
+        manager.handoff_complete(handoff_id)
 
         # Backdate the completed approach
-        approaches = manager._parse_approaches_file(manager.project_approaches_file)
-        approaches[0].updated = date.today() - timedelta(days=APPROACH_COMPLETED_ARCHIVE_DAYS + 1)
-        manager._write_approaches_file(approaches)
+        handoffs = manager._parse_handoffs_file(manager.project_handoffs_file)
+        handoffs[0].updated = date.today() - timedelta(days=HANDOFF_COMPLETED_ARCHIVE_DAYS + 1)
+        manager._write_handoffs_file(handoffs)
 
         # Trigger archival via inject
-        manager.approach_inject()
+        manager.handoff_inject()
 
         # Should be archived
-        archive_content = manager.project_approaches_archive.read_text()
+        archive_content = manager.project_handoffs_archive.read_text()
         assert "Finished work" in archive_content
 
         # Should not be in active list
-        active = manager.approach_list(include_completed=True)
+        active = manager.handoff_list(include_completed=True)
         assert len(active) == 0
 
     def test_completed_approach_at_threshold_not_archived(self, manager: LessonsManager) -> None:
         """Completed approaches exactly at threshold are NOT archived."""
-        from core.models import APPROACH_COMPLETED_ARCHIVE_DAYS
+        from core.models import HANDOFF_COMPLETED_ARCHIVE_DAYS
 
-        approach_id = manager.approach_add(title="Just finished")
-        manager.approach_complete(approach_id)
+        handoff_id = manager.handoff_add(title="Just finished")
+        manager.handoff_complete(handoff_id)
 
         # Set to exactly at threshold
-        approaches = manager._parse_approaches_file(manager.project_approaches_file)
-        approaches[0].updated = date.today() - timedelta(days=APPROACH_COMPLETED_ARCHIVE_DAYS)
-        manager._write_approaches_file(approaches)
+        handoffs = manager._parse_handoffs_file(manager.project_handoffs_file)
+        handoffs[0].updated = date.today() - timedelta(days=HANDOFF_COMPLETED_ARCHIVE_DAYS)
+        manager._write_handoffs_file(handoffs)
 
-        archived = manager._archive_old_completed_approaches()
+        archived = manager._archive_old_completed_handoffs()
 
         assert len(archived) == 0
         # Should still be in active
-        active = manager.approach_list(include_completed=True)
+        active = manager.handoff_list(include_completed=True)
         assert len(active) == 1
 
     def test_fresh_completed_not_archived(self, manager: LessonsManager) -> None:
         """Recently completed approaches stay in active for visibility."""
-        approach_id = manager.approach_add(title="Just done")
-        manager.approach_complete(approach_id)
+        handoff_id = manager.handoff_add(title="Just done")
+        manager.handoff_complete(handoff_id)
 
-        archived = manager._archive_old_completed_approaches()
+        archived = manager._archive_old_completed_handoffs()
 
         assert len(archived) == 0
         # Should show in completed list
-        completed = manager.approach_list_completed()
+        completed = manager.handoff_list_completed()
         assert len(completed) == 1
 
     def test_stale_and_completed_archived_separately(self, manager: LessonsManager) -> None:
         """Both stale active and old completed get archived."""
-        from core.models import APPROACH_STALE_DAYS, APPROACH_COMPLETED_ARCHIVE_DAYS
+        from core.models import HANDOFF_STALE_DAYS, HANDOFF_COMPLETED_ARCHIVE_DAYS
 
         # Create stale active approach
-        id1 = manager.approach_add(title="Stale active")
+        id1 = manager.handoff_add(title="Stale active")
         # Create old completed approach
-        id2 = manager.approach_add(title="Old completed")
-        manager.approach_complete(id2)
+        id2 = manager.handoff_add(title="Old completed")
+        manager.handoff_complete(id2)
 
-        approaches = manager._parse_approaches_file(manager.project_approaches_file)
-        approaches[0].updated = date.today() - timedelta(days=APPROACH_STALE_DAYS + 1)
-        approaches[1].updated = date.today() - timedelta(days=APPROACH_COMPLETED_ARCHIVE_DAYS + 1)
-        manager._write_approaches_file(approaches)
+        handoffs = manager._parse_handoffs_file(manager.project_handoffs_file)
+        handoffs[0].updated = date.today() - timedelta(days=HANDOFF_STALE_DAYS + 1)
+        handoffs[1].updated = date.today() - timedelta(days=HANDOFF_COMPLETED_ARCHIVE_DAYS + 1)
+        manager._write_handoffs_file(handoffs)
 
         # Inject triggers both
-        manager.approach_inject()
+        manager.handoff_inject()
 
-        archive_content = manager.project_approaches_archive.read_text()
+        archive_content = manager.project_handoffs_archive.read_text()
         assert "Stale active" in archive_content
         assert "Old completed" in archive_content
 
         # Both should be gone from active
-        active = manager.approach_list(include_completed=True)
+        active = manager.handoff_list(include_completed=True)
         assert len(active) == 0
 
     def test_archive_old_completed_returns_ids(self, manager: LessonsManager) -> None:
-        """_archive_old_completed_approaches returns list of archived IDs."""
-        from core.models import APPROACH_COMPLETED_ARCHIVE_DAYS
+        """_archive_old_completed_handoffs returns list of archived IDs."""
+        from core.models import HANDOFF_COMPLETED_ARCHIVE_DAYS
 
-        id1 = manager.approach_add(title="Old 1")
-        id2 = manager.approach_add(title="Old 2")
-        id3 = manager.approach_add(title="Fresh")
-        manager.approach_complete(id1)
-        manager.approach_complete(id2)
-        manager.approach_complete(id3)
+        id1 = manager.handoff_add(title="Old 1")
+        id2 = manager.handoff_add(title="Old 2")
+        id3 = manager.handoff_add(title="Fresh")
+        manager.handoff_complete(id1)
+        manager.handoff_complete(id2)
+        manager.handoff_complete(id3)
 
-        approaches = manager._parse_approaches_file(manager.project_approaches_file)
-        approaches[0].updated = date.today() - timedelta(days=APPROACH_COMPLETED_ARCHIVE_DAYS + 2)
-        approaches[1].updated = date.today() - timedelta(days=APPROACH_COMPLETED_ARCHIVE_DAYS + 1)
+        handoffs = manager._parse_handoffs_file(manager.project_handoffs_file)
+        handoffs[0].updated = date.today() - timedelta(days=HANDOFF_COMPLETED_ARCHIVE_DAYS + 2)
+        handoffs[1].updated = date.today() - timedelta(days=HANDOFF_COMPLETED_ARCHIVE_DAYS + 1)
         # id3 stays fresh
-        manager._write_approaches_file(approaches)
+        manager._write_handoffs_file(handoffs)
 
-        archived = manager._archive_old_completed_approaches()
+        archived = manager._archive_old_completed_handoffs()
 
         assert len(archived) == 2
         assert id1 in archived
@@ -2630,95 +2763,95 @@ class TestAutoCompleteOnFinalPattern:
 
     def test_tried_with_final_commit_autocompletes(self, manager: LessonsManager) -> None:
         """Adding tried step with 'Final report and commit' marks approach complete."""
-        approach_id = manager.approach_add(title="Feature work")
+        handoff_id = manager.handoff_add(title="Feature work")
 
-        manager.approach_add_tried(approach_id, "success", "Final report and commit")
+        manager.handoff_add_tried(handoff_id, "success", "Final report and commit")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.status == "completed"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "completed"
 
     def test_tried_with_final_review_autocompletes(self, manager: LessonsManager) -> None:
         """Adding tried step with 'Final review' marks approach complete."""
-        approach_id = manager.approach_add(title="Bug fix")
+        handoff_id = manager.handoff_add(title="Bug fix")
 
-        manager.approach_add_tried(approach_id, "success", "Final review and merge")
+        manager.handoff_add_tried(handoff_id, "success", "Final review and merge")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.status == "completed"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "completed"
 
     def test_final_pattern_case_insensitive(self, manager: LessonsManager) -> None:
         """Final pattern matching is case insensitive."""
-        approach_id = manager.approach_add(title="Task")
+        handoff_id = manager.handoff_add(title="Task")
 
-        manager.approach_add_tried(approach_id, "success", "FINAL COMMIT")
+        manager.handoff_add_tried(handoff_id, "success", "FINAL COMMIT")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.status == "completed"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "completed"
 
     def test_final_pattern_requires_success(self, manager: LessonsManager) -> None:
         """Only successful 'final' steps trigger auto-complete."""
-        approach_id = manager.approach_add(title="Task")
+        handoff_id = manager.handoff_add(title="Task")
 
-        manager.approach_add_tried(approach_id, "fail", "Final commit failed")
+        manager.handoff_add_tried(handoff_id, "fail", "Final commit failed")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.status != "completed"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status != "completed"
 
     def test_final_pattern_partial_does_not_complete(self, manager: LessonsManager) -> None:
         """Partial outcome with 'final' does not trigger auto-complete."""
-        approach_id = manager.approach_add(title="Task")
+        handoff_id = manager.handoff_add(title="Task")
 
-        manager.approach_add_tried(approach_id, "partial", "Final steps started")
+        manager.handoff_add_tried(handoff_id, "partial", "Final steps started")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.status != "completed"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status != "completed"
 
     def test_word_final_in_middle_does_not_trigger(self, manager: LessonsManager) -> None:
         """'Final' must be at start of description to trigger."""
-        approach_id = manager.approach_add(title="Task")
+        handoff_id = manager.handoff_add(title="Task")
 
-        manager.approach_add_tried(approach_id, "success", "Updated the final configuration")
+        manager.handoff_add_tried(handoff_id, "success", "Updated the final configuration")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.status != "completed"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status != "completed"
 
     def test_done_pattern_autocompletes(self, manager: LessonsManager) -> None:
         """'Done' at start also triggers auto-complete."""
-        approach_id = manager.approach_add(title="Task")
+        handoff_id = manager.handoff_add(title="Task")
 
-        manager.approach_add_tried(approach_id, "success", "Done - all tests passing")
+        manager.handoff_add_tried(handoff_id, "success", "Done - all tests passing")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.status == "completed"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "completed"
 
     def test_complete_pattern_autocompletes(self, manager: LessonsManager) -> None:
         """'Complete' at start also triggers auto-complete."""
-        approach_id = manager.approach_add(title="Task")
+        handoff_id = manager.handoff_add(title="Task")
 
-        manager.approach_add_tried(approach_id, "success", "Complete implementation merged")
+        manager.handoff_add_tried(handoff_id, "success", "Complete implementation merged")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.status == "completed"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "completed"
 
     def test_finished_pattern_autocompletes(self, manager: LessonsManager) -> None:
         """'Finished' at start also triggers auto-complete."""
-        approach_id = manager.approach_add(title="Task")
+        handoff_id = manager.handoff_add(title="Task")
 
-        manager.approach_add_tried(approach_id, "success", "Finished all tasks")
+        manager.handoff_add_tried(handoff_id, "success", "Finished all tasks")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.status == "completed"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "completed"
 
     def test_autocomplete_sets_phase_to_review(self, manager: LessonsManager) -> None:
         """Auto-completed approaches get phase set to 'review'."""
-        approach_id = manager.approach_add(title="Task")
-        manager.approach_update_phase(approach_id, "implementing")
+        handoff_id = manager.handoff_add(title="Task")
+        manager.handoff_update_phase(handoff_id, "implementing")
 
-        manager.approach_add_tried(approach_id, "success", "Final commit")
+        manager.handoff_add_tried(handoff_id, "success", "Final commit")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.status == "completed"
-        assert approach.phase == "review"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "completed"
+        assert handoff.phase == "review"
 
 
 class TestAutoPhaseUpdate:
@@ -2726,128 +2859,128 @@ class TestAutoPhaseUpdate:
 
     def test_implement_keyword_bumps_to_implementing(self, manager: LessonsManager) -> None:
         """Tried step containing 'implement' bumps phase to implementing."""
-        approach_id = manager.approach_add(title="Feature")
-        approach = manager.approach_get(approach_id)
-        assert approach.phase == "research"  # Default
+        handoff_id = manager.handoff_add(title="Feature")
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.phase == "research"  # Default
 
-        manager.approach_add_tried(approach_id, "success", "Implement the core logic")
+        manager.handoff_add_tried(handoff_id, "success", "Implement the core logic")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.phase == "implementing"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.phase == "implementing"
 
     def test_build_keyword_bumps_to_implementing(self, manager: LessonsManager) -> None:
         """Tried step containing 'build' bumps phase to implementing."""
-        approach_id = manager.approach_add(title="Feature")
+        handoff_id = manager.handoff_add(title="Feature")
 
-        manager.approach_add_tried(approach_id, "success", "Build the component")
+        manager.handoff_add_tried(handoff_id, "success", "Build the component")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.phase == "implementing"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.phase == "implementing"
 
     def test_create_keyword_bumps_to_implementing(self, manager: LessonsManager) -> None:
         """Tried step containing 'create' bumps phase to implementing."""
-        approach_id = manager.approach_add(title="Feature")
+        handoff_id = manager.handoff_add(title="Feature")
 
-        manager.approach_add_tried(approach_id, "success", "Create new module")
+        manager.handoff_add_tried(handoff_id, "success", "Create new module")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.phase == "implementing"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.phase == "implementing"
 
     def test_add_keyword_bumps_to_implementing(self, manager: LessonsManager) -> None:
         """Tried step starting with 'Add' bumps phase to implementing."""
-        approach_id = manager.approach_add(title="Feature")
+        handoff_id = manager.handoff_add(title="Feature")
 
-        manager.approach_add_tried(approach_id, "success", "Add error handling")
+        manager.handoff_add_tried(handoff_id, "success", "Add error handling")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.phase == "implementing"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.phase == "implementing"
 
     def test_fix_keyword_bumps_to_implementing(self, manager: LessonsManager) -> None:
         """Tried step starting with 'Fix' bumps phase to implementing."""
-        approach_id = manager.approach_add(title="Bug")
+        handoff_id = manager.handoff_add(title="Bug")
 
-        manager.approach_add_tried(approach_id, "success", "Fix the null pointer issue")
+        manager.handoff_add_tried(handoff_id, "success", "Fix the null pointer issue")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.phase == "implementing"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.phase == "implementing"
 
     def test_many_success_steps_bumps_to_implementing(self, manager: LessonsManager) -> None:
         """10+ successful tried steps bumps phase to implementing."""
-        approach_id = manager.approach_add(title="Big task")
+        handoff_id = manager.handoff_add(title="Big task")
 
         # Add 10 generic success steps
         for i in range(10):
-            manager.approach_add_tried(approach_id, "success", f"Step {i + 1}")
+            manager.handoff_add_tried(handoff_id, "success", f"Step {i + 1}")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.phase == "implementing"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.phase == "implementing"
 
     def test_nine_steps_stays_in_research(self, manager: LessonsManager) -> None:
         """9 successful steps without implementing keywords stays in research."""
-        approach_id = manager.approach_add(title="Research task")
+        handoff_id = manager.handoff_add(title="Research task")
 
         for i in range(9):
-            manager.approach_add_tried(approach_id, "success", f"Research step {i + 1}")
+            manager.handoff_add_tried(handoff_id, "success", f"Research step {i + 1}")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.phase == "research"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.phase == "research"
 
     def test_phase_not_downgraded(self, manager: LessonsManager) -> None:
         """If already in implementing, phase is not changed."""
-        approach_id = manager.approach_add(title="Feature")
-        manager.approach_update_phase(approach_id, "implementing")
+        handoff_id = manager.handoff_add(title="Feature")
+        manager.handoff_update_phase(handoff_id, "implementing")
 
-        manager.approach_add_tried(approach_id, "success", "Research more options")
+        manager.handoff_add_tried(handoff_id, "success", "Research more options")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.phase == "implementing"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.phase == "implementing"
 
     def test_review_phase_not_changed(self, manager: LessonsManager) -> None:
         """If in review phase, auto-update doesn't change it."""
-        approach_id = manager.approach_add(title="Feature")
-        manager.approach_update_phase(approach_id, "review")
+        handoff_id = manager.handoff_add(title="Feature")
+        manager.handoff_update_phase(handoff_id, "review")
 
-        manager.approach_add_tried(approach_id, "success", "Implement one more thing")
+        manager.handoff_add_tried(handoff_id, "success", "Implement one more thing")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.phase == "review"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.phase == "review"
 
     def test_planning_phase_bumps_to_implementing(self, manager: LessonsManager) -> None:
         """Planning phase can be bumped to implementing."""
-        approach_id = manager.approach_add(title="Feature")
-        manager.approach_update_phase(approach_id, "planning")
+        handoff_id = manager.handoff_add(title="Feature")
+        manager.handoff_update_phase(handoff_id, "planning")
 
-        manager.approach_add_tried(approach_id, "success", "Implement the API")
+        manager.handoff_add_tried(handoff_id, "success", "Implement the API")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.phase == "implementing"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.phase == "implementing"
 
     def test_write_keyword_bumps_to_implementing(self, manager: LessonsManager) -> None:
         """Tried step starting with 'Write' bumps phase to implementing."""
-        approach_id = manager.approach_add(title="Docs")
+        handoff_id = manager.handoff_add(title="Docs")
 
-        manager.approach_add_tried(approach_id, "success", "Write the documentation")
+        manager.handoff_add_tried(handoff_id, "success", "Write the documentation")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.phase == "implementing"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.phase == "implementing"
 
     def test_update_keyword_bumps_to_implementing(self, manager: LessonsManager) -> None:
         """Tried step starting with 'Update' bumps phase to implementing."""
-        approach_id = manager.approach_add(title="Refactor")
+        handoff_id = manager.handoff_add(title="Refactor")
 
-        manager.approach_add_tried(approach_id, "success", "Update the interface")
+        manager.handoff_add_tried(handoff_id, "success", "Update the interface")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.phase == "implementing"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.phase == "implementing"
 
     def test_failed_implement_step_still_bumps(self, manager: LessonsManager) -> None:
         """Failed implementing step still bumps phase (attempted impl)."""
-        approach_id = manager.approach_add(title="Feature")
+        handoff_id = manager.handoff_add(title="Feature")
 
-        manager.approach_add_tried(approach_id, "fail", "Implement the feature - build errors")
+        manager.handoff_add_tried(handoff_id, "fail", "Implement the feature - build errors")
 
-        approach = manager.approach_get(approach_id)
-        assert approach.phase == "implementing"
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.phase == "implementing"
 
 
 class TestExtractThemes:
@@ -2855,72 +2988,72 @@ class TestExtractThemes:
 
     def test_extract_themes_guard_keywords(self, manager: LessonsManager) -> None:
         """Steps with guard/destructor keywords are categorized as 'guard'."""
-        approach_id = manager.approach_add(title="Cleanup")
-        manager.approach_add_tried(approach_id, "success", "Add is_destroyed guard")
-        manager.approach_add_tried(approach_id, "success", "Fix destructor order")
-        manager.approach_add_tried(approach_id, "success", "Cleanup resources")
+        handoff_id = manager.handoff_add(title="Cleanup")
+        manager.handoff_add_tried(handoff_id, "success", "Add is_destroyed guard")
+        manager.handoff_add_tried(handoff_id, "success", "Fix destructor order")
+        manager.handoff_add_tried(handoff_id, "success", "Cleanup resources")
 
-        approach = manager.approach_get(approach_id)
-        themes = manager._extract_themes(approach.tried)
+        handoff = manager.handoff_get(handoff_id)
+        themes = manager._extract_themes(handoff.tried)
 
         assert themes.get("guard", 0) == 3
 
     def test_extract_themes_plugin_keywords(self, manager: LessonsManager) -> None:
         """Steps with plugin/phase keywords are categorized as 'plugin'."""
-        approach_id = manager.approach_add(title="Plugin work")
-        manager.approach_add_tried(approach_id, "success", "Phase 3: Plan plugin structure")
-        manager.approach_add_tried(approach_id, "success", "Implement LED plugin")
+        handoff_id = manager.handoff_add(title="Plugin work")
+        manager.handoff_add_tried(handoff_id, "success", "Phase 3: Plan plugin structure")
+        manager.handoff_add_tried(handoff_id, "success", "Implement LED plugin")
 
-        approach = manager.approach_get(approach_id)
-        themes = manager._extract_themes(approach.tried)
+        handoff = manager.handoff_get(handoff_id)
+        themes = manager._extract_themes(handoff.tried)
 
         assert themes.get("plugin", 0) == 2
 
     def test_extract_themes_ui_keywords(self, manager: LessonsManager) -> None:
         """Steps with xml/button/modal keywords are categorized as 'ui'."""
-        approach_id = manager.approach_add(title="UI work")
-        manager.approach_add_tried(approach_id, "success", "Add XML button")
-        manager.approach_add_tried(approach_id, "success", "Create modal dialog")
-        manager.approach_add_tried(approach_id, "success", "Update panel layout")
+        handoff_id = manager.handoff_add(title="UI work")
+        manager.handoff_add_tried(handoff_id, "success", "Add XML button")
+        manager.handoff_add_tried(handoff_id, "success", "Create modal dialog")
+        manager.handoff_add_tried(handoff_id, "success", "Update panel layout")
 
-        approach = manager.approach_get(approach_id)
-        themes = manager._extract_themes(approach.tried)
+        handoff = manager.handoff_get(handoff_id)
+        themes = manager._extract_themes(handoff.tried)
 
         assert themes.get("ui", 0) == 3
 
     def test_extract_themes_fix_keywords(self, manager: LessonsManager) -> None:
         """Steps with fix/bug/error keywords are categorized as 'fix'."""
-        approach_id = manager.approach_add(title="Bug fixes")
-        manager.approach_add_tried(approach_id, "success", "Fix HIGH: null pointer")
-        manager.approach_add_tried(approach_id, "success", "Bug in error handling")
-        manager.approach_add_tried(approach_id, "success", "Handle issue #123")
+        handoff_id = manager.handoff_add(title="Bug fixes")
+        manager.handoff_add_tried(handoff_id, "success", "Fix HIGH: null pointer")
+        manager.handoff_add_tried(handoff_id, "success", "Bug in error handling")
+        manager.handoff_add_tried(handoff_id, "success", "Handle issue #123")
 
-        approach = manager.approach_get(approach_id)
-        themes = manager._extract_themes(approach.tried)
+        handoff = manager.handoff_get(handoff_id)
+        themes = manager._extract_themes(handoff.tried)
 
         assert themes.get("fix", 0) == 3
 
     def test_extract_themes_other_fallback(self, manager: LessonsManager) -> None:
         """Unrecognized steps fall into 'other' category."""
-        approach_id = manager.approach_add(title="Misc")
-        manager.approach_add_tried(approach_id, "success", "Research the approach")
-        manager.approach_add_tried(approach_id, "success", "Document findings")
+        handoff_id = manager.handoff_add(title="Misc")
+        manager.handoff_add_tried(handoff_id, "success", "Research the approach")
+        manager.handoff_add_tried(handoff_id, "success", "Document findings")
 
-        approach = manager.approach_get(approach_id)
-        themes = manager._extract_themes(approach.tried)
+        handoff = manager.handoff_get(handoff_id)
+        themes = manager._extract_themes(handoff.tried)
 
         assert themes.get("other", 0) == 2
 
     def test_extract_themes_mixed(self, manager: LessonsManager) -> None:
         """Mixed steps are categorized correctly (first matching theme wins)."""
-        approach_id = manager.approach_add(title="Mixed work")
-        manager.approach_add_tried(approach_id, "success", "Add is_destroyed guard")
-        manager.approach_add_tried(approach_id, "success", "Fix the null error")  # pure fix
-        manager.approach_add_tried(approach_id, "success", "Plugin phase 2")
-        manager.approach_add_tried(approach_id, "success", "Random task")
+        handoff_id = manager.handoff_add(title="Mixed work")
+        manager.handoff_add_tried(handoff_id, "success", "Add is_destroyed guard")
+        manager.handoff_add_tried(handoff_id, "success", "Fix the null error")  # pure fix
+        manager.handoff_add_tried(handoff_id, "success", "Plugin phase 2")
+        manager.handoff_add_tried(handoff_id, "success", "Random task")
 
-        approach = manager.approach_get(approach_id)
-        themes = manager._extract_themes(approach.tried)
+        handoff = manager.handoff_get(handoff_id)
+        themes = manager._extract_themes(handoff.tried)
 
         assert themes.get("guard", 0) == 1
         assert themes.get("fix", 0) == 1
@@ -2943,49 +3076,49 @@ class TestSummarizeTriedSteps:
 
     def test_summarize_shows_progress_count(self, manager: LessonsManager) -> None:
         """Summary includes step count."""
-        approach_id = manager.approach_add(title="Task")
+        handoff_id = manager.handoff_add(title="Task")
         for i in range(5):
-            manager.approach_add_tried(approach_id, "success", f"Step {i+1}")
+            manager.handoff_add_tried(handoff_id, "success", f"Step {i+1}")
 
-        approach = manager.approach_get(approach_id)
-        result = manager._summarize_tried_steps(approach.tried)
+        handoff = manager.handoff_get(handoff_id)
+        result = manager._summarize_tried_steps(handoff.tried)
         result_str = "\n".join(result)
 
         assert "5 steps" in result_str
 
     def test_summarize_all_success(self, manager: LessonsManager) -> None:
         """All success steps show '(all success)'."""
-        approach_id = manager.approach_add(title="Task")
-        manager.approach_add_tried(approach_id, "success", "Step 1")
-        manager.approach_add_tried(approach_id, "success", "Step 2")
+        handoff_id = manager.handoff_add(title="Task")
+        manager.handoff_add_tried(handoff_id, "success", "Step 1")
+        manager.handoff_add_tried(handoff_id, "success", "Step 2")
 
-        approach = manager.approach_get(approach_id)
-        result = manager._summarize_tried_steps(approach.tried)
+        handoff = manager.handoff_get(handoff_id)
+        result = manager._summarize_tried_steps(handoff.tried)
         result_str = "\n".join(result)
 
         assert "all success" in result_str
 
     def test_summarize_mixed_outcomes(self, manager: LessonsManager) -> None:
         """Mixed outcomes show success/fail counts."""
-        approach_id = manager.approach_add(title="Task")
-        manager.approach_add_tried(approach_id, "success", "Step 1")
-        manager.approach_add_tried(approach_id, "fail", "Step 2 failed")
-        manager.approach_add_tried(approach_id, "success", "Step 3")
+        handoff_id = manager.handoff_add(title="Task")
+        manager.handoff_add_tried(handoff_id, "success", "Step 1")
+        manager.handoff_add_tried(handoff_id, "fail", "Step 2 failed")
+        manager.handoff_add_tried(handoff_id, "success", "Step 3")
 
-        approach = manager.approach_get(approach_id)
-        result = manager._summarize_tried_steps(approach.tried)
+        handoff = manager.handoff_get(handoff_id)
+        result = manager._summarize_tried_steps(handoff.tried)
         result_str = "\n".join(result)
 
         assert "2" in result_str and "1" in result_str  # 2 success, 1 fail
 
     def test_summarize_shows_last_3_steps(self, manager: LessonsManager) -> None:
         """Summary shows last 3 steps."""
-        approach_id = manager.approach_add(title="Task")
+        handoff_id = manager.handoff_add(title="Task")
         for i in range(10):
-            manager.approach_add_tried(approach_id, "success", f"Step {i+1}")
+            manager.handoff_add_tried(handoff_id, "success", f"Step {i+1}")
 
-        approach = manager.approach_get(approach_id)
-        result = manager._summarize_tried_steps(approach.tried)
+        handoff = manager.handoff_get(handoff_id)
+        result = manager._summarize_tried_steps(handoff.tried)
         result_str = "\n".join(result)
 
         assert "Step 8" in result_str
@@ -2995,12 +3128,12 @@ class TestSummarizeTriedSteps:
 
     def test_summarize_truncates_long_descriptions(self, manager: LessonsManager) -> None:
         """Long step descriptions are truncated."""
-        approach_id = manager.approach_add(title="Task")
+        handoff_id = manager.handoff_add(title="Task")
         long_desc = "A" * 100  # 100 chars
-        manager.approach_add_tried(approach_id, "success", long_desc)
+        manager.handoff_add_tried(handoff_id, "success", long_desc)
 
-        approach = manager.approach_get(approach_id)
-        result = manager._summarize_tried_steps(approach.tried)
+        handoff = manager.handoff_get(handoff_id)
+        result = manager._summarize_tried_steps(handoff.tried)
         result_str = "\n".join(result)
 
         assert "..." in result_str
@@ -3008,17 +3141,17 @@ class TestSummarizeTriedSteps:
 
     def test_summarize_shows_themes_for_earlier(self, manager: LessonsManager) -> None:
         """Earlier steps (before last 3) show theme summary."""
-        approach_id = manager.approach_add(title="Task")
+        handoff_id = manager.handoff_add(title="Task")
         # Add 5 guard-related steps
         for i in range(5):
-            manager.approach_add_tried(approach_id, "success", f"Add is_destroyed guard {i+1}")
+            manager.handoff_add_tried(handoff_id, "success", f"Add is_destroyed guard {i+1}")
         # Add 3 more steps (will be the "recent" ones)
-        manager.approach_add_tried(approach_id, "success", "Recent 1")
-        manager.approach_add_tried(approach_id, "success", "Recent 2")
-        manager.approach_add_tried(approach_id, "success", "Recent 3")
+        manager.handoff_add_tried(handoff_id, "success", "Recent 1")
+        manager.handoff_add_tried(handoff_id, "success", "Recent 2")
+        manager.handoff_add_tried(handoff_id, "success", "Recent 3")
 
-        approach = manager.approach_get(approach_id)
-        result = manager._summarize_tried_steps(approach.tried)
+        handoff = manager.handoff_get(handoff_id)
+        result = manager._summarize_tried_steps(handoff.tried)
         result_str = "\n".join(result)
 
         assert "Earlier:" in result_str
@@ -3026,12 +3159,12 @@ class TestSummarizeTriedSteps:
 
     def test_summarize_no_themes_for_few_steps(self, manager: LessonsManager) -> None:
         """No theme summary when 3 or fewer steps."""
-        approach_id = manager.approach_add(title="Task")
-        manager.approach_add_tried(approach_id, "success", "Step 1")
-        manager.approach_add_tried(approach_id, "success", "Step 2")
+        handoff_id = manager.handoff_add(title="Task")
+        manager.handoff_add_tried(handoff_id, "success", "Step 1")
+        manager.handoff_add_tried(handoff_id, "success", "Step 2")
 
-        approach = manager.approach_get(approach_id)
-        result = manager._summarize_tried_steps(approach.tried)
+        handoff = manager.handoff_get(handoff_id)
+        result = manager._summarize_tried_steps(handoff.tried)
         result_str = "\n".join(result)
 
         assert "Earlier:" not in result_str
@@ -3042,19 +3175,19 @@ class TestHandoffInjectCompact:
 
     def test_inject_shows_relative_time(self, manager: LessonsManager) -> None:
         """Injection shows relative time instead of full dates."""
-        manager.approach_add(title="Test approach")
+        manager.handoff_add(title="Test approach")
 
-        result = manager.approach_inject()
+        result = manager.handoff_inject()
 
         assert "today" in result.lower() or "Last" in result
 
     def test_inject_compact_progress_not_full_list(self, manager: LessonsManager) -> None:
         """Injection shows progress summary, not full tried list."""
-        approach_id = manager.approach_add(title="Task")
+        handoff_id = manager.handoff_add(title="Task")
         for i in range(20):
-            manager.approach_add_tried(approach_id, "success", f"Step {i+1}")
+            manager.handoff_add_tried(handoff_id, "success", f"Step {i+1}")
 
-        result = manager.approach_inject()
+        result = manager.handoff_inject()
 
         # Should NOT have numbered list 1. 2. 3. etc
         assert "1. [success]" not in result
@@ -3064,31 +3197,31 @@ class TestHandoffInjectCompact:
 
     def test_inject_shows_appears_done_warning(self, manager: LessonsManager) -> None:
         """Warning shown when last step looks like completion."""
-        approach_id = manager.approach_add(title="Task")
-        manager.approach_add_tried(approach_id, "success", "Research")
-        manager.approach_add_tried(approach_id, "success", "Implement")
+        handoff_id = manager.handoff_add(title="Task")
+        manager.handoff_add_tried(handoff_id, "success", "Research")
+        manager.handoff_add_tried(handoff_id, "success", "Implement")
         # Don't use "Final" as it will auto-complete now
         # Instead test with an approach that was manually kept open
 
         # For this test, we need to add a "final-looking" step without triggering auto-complete
         # Let's test with a step that says "commit" at the end, not start
-        approach_id2 = manager.approach_add(title="Task 2")
-        manager.approach_add_tried(approach_id2, "success", "All done and ready for commit")
+        handoff_id2 = manager.handoff_add(title="Task 2")
+        manager.handoff_add_tried(handoff_id2, "success", "All done and ready for commit")
 
-        result = manager.approach_inject()
+        result = manager.handoff_inject()
 
         # This shouldn't trigger the warning since "All done" doesn't start with completion pattern
         # The warning only shows for steps starting with Final/Done/Complete/Finished
-        assert approach_id2 in result
+        assert handoff_id2 in result
 
     def test_inject_compact_files(self, manager: LessonsManager) -> None:
         """Files list is compacted when more than 3."""
-        manager.approach_add(
+        manager.handoff_add(
             title="Multi-file task",
             files=["file1.py", "file2.py", "file3.py", "file4.py", "file5.py"]
         )
 
-        result = manager.approach_inject()
+        result = manager.handoff_inject()
 
         assert "file1.py" in result
         assert "file2.py" in result
@@ -3097,12 +3230,12 @@ class TestHandoffInjectCompact:
 
     def test_inject_all_files_when_few(self, manager: LessonsManager) -> None:
         """All files shown when 3 or fewer."""
-        manager.approach_add(
+        manager.handoff_add(
             title="Small task",
             files=["file1.py", "file2.py"]
         )
 
-        result = manager.approach_inject()
+        result = manager.handoff_inject()
 
         assert "file1.py" in result
         assert "file2.py" in result
@@ -3239,22 +3372,22 @@ class TestHandoffWithHandoffContext:
         )
 
         # Create handoff with context
-        approach_id = manager.approach_add("Implement API layer")
-        approach = manager.approach_get(approach_id)
+        handoff_id = manager.handoff_add("Implement API layer")
+        handoff = manager.handoff_get(handoff_id)
 
         # After implementation, Handoff should have 'handoff' field instead of 'checkpoint'
-        assert hasattr(approach, "handoff") or hasattr(approach, "checkpoint")
+        assert hasattr(handoff, "handoff") or hasattr(handoff, "checkpoint")
 
     def test_handoff_without_handoff_context(self, manager: LessonsManager) -> None:
         """Handoff can be created without HandoffContext (None default)."""
-        approach_id = manager.approach_add("Simple task")
-        approach = manager.approach_get(approach_id)
+        handoff_id = manager.handoff_add("Simple task")
+        handoff = manager.handoff_get(handoff_id)
 
         # Either the new 'handoff' field is None, or the old 'checkpoint' is empty
-        if hasattr(approach, "handoff"):
-            assert approach.handoff is None
+        if hasattr(handoff, "handoff"):
+            assert handoff.handoff is None
         else:
-            assert approach.checkpoint == ""
+            assert handoff.checkpoint == ""
 
     def test_handoff_update_with_context(self, manager: LessonsManager) -> None:
         """Should be able to update Handoff with HandoffContext."""
@@ -3263,7 +3396,7 @@ class TestHandoffWithHandoffContext:
         except ImportError:
             pytest.skip("HandoffContext not yet implemented")
 
-        approach_id = manager.approach_add("Feature work")
+        handoff_id = manager.handoff_add("Feature work")
 
         context = HandoffContext(
             summary="Progress: core logic complete",
@@ -3276,15 +3409,15 @@ class TestHandoffWithHandoffContext:
 
         # This method should exist after implementation
         if hasattr(manager, "handoff_update_context"):
-            manager.handoff_update_context(approach_id, context)
-            approach = manager.approach_get(approach_id)
-            assert approach.handoff is not None
-            assert approach.handoff.summary == "Progress: core logic complete"
+            manager.handoff_update_context(handoff_id, context)
+            handoff = manager.handoff_get(handoff_id)
+            assert handoff.handoff is not None
+            assert handoff.handoff.summary == "Progress: core logic complete"
         else:
             # Fall back to existing checkpoint method
-            manager.approach_update_checkpoint(approach_id, context.summary)
-            approach = manager.approach_get(approach_id)
-            assert context.summary in approach.checkpoint
+            manager.handoff_update_checkpoint(handoff_id, context.summary)
+            handoff = manager.handoff_get(handoff_id)
+            assert context.summary in handoff.checkpoint
 
 
 class TestHandoffBlockedBy:
@@ -3292,51 +3425,51 @@ class TestHandoffBlockedBy:
 
     def test_handoff_with_blocked_by(self, manager: LessonsManager) -> None:
         """Create Handoff with blocked_by dependency list."""
-        approach_id = manager.approach_add("Blocked task")
-        approach = manager.approach_get(approach_id)
+        handoff_id = manager.handoff_add("Blocked task")
+        handoff = manager.handoff_get(handoff_id)
 
         # After implementation, Handoff should have 'blocked_by' field
-        assert hasattr(approach, "blocked_by") or True  # Will fail until implemented
+        assert hasattr(handoff, "blocked_by") or True  # Will fail until implemented
 
     def test_handoff_blocked_by_default_empty(self, manager: LessonsManager) -> None:
         """Handoff blocked_by defaults to empty list."""
-        approach_id = manager.approach_add("Independent task")
-        approach = manager.approach_get(approach_id)
+        handoff_id = manager.handoff_add("Independent task")
+        handoff = manager.handoff_get(handoff_id)
 
-        if hasattr(approach, "blocked_by"):
-            assert approach.blocked_by == []
+        if hasattr(handoff, "blocked_by"):
+            assert handoff.blocked_by == []
         else:
             # Field doesn't exist yet - this is expected in TDD
             pass
 
     def test_handoff_update_blocked_by(self, manager: LessonsManager) -> None:
         """Should be able to update Handoff blocked_by list."""
-        approach_id = manager.approach_add("Dependent task")
+        handoff_id = manager.handoff_add("Dependent task")
 
         # Create another approach to depend on
-        blocking_id = manager.approach_add("Blocking task")
+        blocking_id = manager.handoff_add("Blocking task")
 
         # This method should exist after implementation
         if hasattr(manager, "handoff_update_blocked_by"):
-            manager.handoff_update_blocked_by(approach_id, [blocking_id])
-            approach = manager.approach_get(approach_id)
-            assert blocking_id in approach.blocked_by
+            manager.handoff_update_blocked_by(handoff_id, [blocking_id])
+            handoff = manager.handoff_get(handoff_id)
+            assert blocking_id in handoff.blocked_by
         else:
             # Method doesn't exist yet - expected in TDD
             pass
 
     def test_handoff_blocked_by_multiple_dependencies(self, manager: LessonsManager) -> None:
         """Handoff can depend on multiple other handoffs."""
-        approach_id = manager.approach_add("Complex task")
-        dep1_id = manager.approach_add("Dependency 1")
-        dep2_id = manager.approach_add("Dependency 2")
+        handoff_id = manager.handoff_add("Complex task")
+        dep1_id = manager.handoff_add("Dependency 1")
+        dep2_id = manager.handoff_add("Dependency 2")
 
         if hasattr(manager, "handoff_update_blocked_by"):
-            manager.handoff_update_blocked_by(approach_id, [dep1_id, dep2_id])
-            approach = manager.approach_get(approach_id)
-            assert len(approach.blocked_by) == 2
-            assert dep1_id in approach.blocked_by
-            assert dep2_id in approach.blocked_by
+            manager.handoff_update_blocked_by(handoff_id, [dep1_id, dep2_id])
+            handoff = manager.handoff_get(handoff_id)
+            assert len(handoff.blocked_by) == 2
+            assert dep1_id in handoff.blocked_by
+            assert dep2_id in handoff.blocked_by
 
 
 class TestHandoffContextSerialization:
@@ -3349,7 +3482,7 @@ class TestHandoffContextSerialization:
         except ImportError:
             pytest.skip("HandoffContext not yet implemented")
 
-        approach_id = manager.approach_add("Feature with context")
+        handoff_id = manager.handoff_add("Feature with context")
 
         context = HandoffContext(
             summary="Database migration complete",
@@ -3361,7 +3494,7 @@ class TestHandoffContextSerialization:
         )
 
         if hasattr(manager, "handoff_update_context"):
-            manager.handoff_update_context(approach_id, context)
+            manager.handoff_update_context(handoff_id, context)
 
             # Read the file and check format
             content = manager.project_handoffs_file.read_text()
@@ -3377,7 +3510,7 @@ class TestHandoffContextSerialization:
         except ImportError:
             pytest.skip("HandoffContext not yet implemented")
 
-        approach_id = manager.approach_add("Parseable context")
+        handoff_id = manager.handoff_add("Parseable context")
 
         context = HandoffContext(
             summary="Test parse roundtrip",
@@ -3389,41 +3522,41 @@ class TestHandoffContextSerialization:
         )
 
         if hasattr(manager, "handoff_update_context"):
-            manager.handoff_update_context(approach_id, context)
+            manager.handoff_update_context(handoff_id, context)
 
             # Force re-parse by getting fresh
-            approach = manager.approach_get(approach_id)
+            handoff = manager.handoff_get(handoff_id)
 
-            assert approach.handoff is not None
-            assert approach.handoff.summary == "Test parse roundtrip"
-            assert "test.py:1" in approach.handoff.critical_files
-            assert "Added test" in approach.handoff.recent_changes
-            assert "Tests are important" in approach.handoff.learnings
-            assert "Need more tests" in approach.handoff.blockers
-            assert approach.handoff.git_ref == "tst1234"
+            assert handoff.handoff is not None
+            assert handoff.handoff.summary == "Test parse roundtrip"
+            assert "test.py:1" in handoff.handoff.critical_files
+            assert "Added test" in handoff.handoff.recent_changes
+            assert "Tests are important" in handoff.handoff.learnings
+            assert "Need more tests" in handoff.handoff.blockers
+            assert handoff.handoff.git_ref == "tst1234"
 
     def test_blocked_by_serializes_to_markdown(self, manager: LessonsManager) -> None:
         """blocked_by field should serialize to markdown."""
-        approach_id = manager.approach_add("Task with deps")
+        handoff_id = manager.handoff_add("Task with deps")
 
         if hasattr(manager, "handoff_update_blocked_by"):
-            dep_id = manager.approach_add("Dependency")
-            manager.handoff_update_blocked_by(approach_id, [dep_id])
+            dep_id = manager.handoff_add("Dependency")
+            manager.handoff_update_blocked_by(handoff_id, [dep_id])
 
             content = manager.project_handoffs_file.read_text()
             assert "**Blocked By**:" in content or dep_id in content
 
     def test_blocked_by_parses_from_markdown(self, manager: LessonsManager) -> None:
         """blocked_by field should parse correctly from markdown."""
-        approach_id = manager.approach_add("Task to parse")
+        handoff_id = manager.handoff_add("Task to parse")
 
         if hasattr(manager, "handoff_update_blocked_by"):
-            dep_id = manager.approach_add("Dep task")
-            manager.handoff_update_blocked_by(approach_id, [dep_id])
+            dep_id = manager.handoff_add("Dep task")
+            manager.handoff_update_blocked_by(handoff_id, [dep_id])
 
             # Force re-parse
-            approach = manager.approach_get(approach_id)
-            assert dep_id in approach.blocked_by
+            handoff = manager.handoff_get(handoff_id)
+            assert dep_id in handoff.blocked_by
 
 
 class TestHandoffContextBackwardCompatibility:
@@ -3437,22 +3570,22 @@ class TestHandoffContextBackwardCompatibility:
             pytest.skip("HandoffContext not yet implemented")
 
         # Create approach with old checkpoint
-        approach_id = manager.approach_add("Legacy approach")
-        manager.approach_update_checkpoint(approach_id, "Old checkpoint text")
+        handoff_id = manager.handoff_add("Legacy approach")
+        manager.handoff_update_checkpoint(handoff_id, "Old checkpoint text")
 
-        approach = manager.approach_get(approach_id)
+        handoff = manager.handoff_get(handoff_id)
 
         # Either new handoff field has summary from checkpoint, or checkpoint still works
-        if hasattr(approach, "handoff") and approach.handoff is not None:
-            assert approach.handoff.summary == "Old checkpoint text"
+        if hasattr(handoff, "handoff") and handoff.handoff is not None:
+            assert handoff.handoff.summary == "Old checkpoint text"
         else:
-            assert approach.checkpoint == "Old checkpoint text"
+            assert handoff.checkpoint == "Old checkpoint text"
 
     def test_handoffs_without_context_still_parse(self, manager: LessonsManager) -> None:
         """Old handoff format without HandoffContext should still parse."""
         # Write old format directly
-        approaches_file = manager.project_handoffs_file
-        approaches_file.parent.mkdir(parents=True, exist_ok=True)
+        handoffs_file = manager.project_handoffs_file
+        handoffs_file.parent.mkdir(parents=True, exist_ok=True)
 
         old_format = """# HANDOFFS.md - Active Work Tracking
 
@@ -3461,7 +3594,7 @@ class TestHandoffContextBackwardCompatibility:
 
 ## Active Handoffs
 
-### [A001] Legacy handoff
+### [hf-0000001] Legacy handoff
 - **Status**: in_progress | **Phase**: implementing | **Agent**: user
 - **Created**: 2025-12-28 | **Updated**: 2025-12-28
 - **Files**: old_file.py
@@ -3475,23 +3608,23 @@ class TestHandoffContextBackwardCompatibility:
 
 ---
 """
-        approaches_file.write_text(old_format)
+        handoffs_file.write_text(old_format)
 
         # Should parse without errors
-        approach = manager.approach_get("A001")
-        assert approach is not None
-        assert approach.title == "Legacy handoff"
-        assert approach.status == "in_progress"
+        handoff = manager.handoff_get("hf-0000001")
+        assert handoff is not None
+        assert handoff.title == "Legacy handoff"
+        assert handoff.status == "in_progress"
 
     def test_empty_handoff_context_ok(self, manager: LessonsManager) -> None:
         """Handoff with None/empty HandoffContext should work."""
-        approach_id = manager.approach_add("No context needed")
-        approach = manager.approach_get(approach_id)
+        handoff_id = manager.handoff_add("No context needed")
+        handoff = manager.handoff_get(handoff_id)
 
         # Should not error, context is optional
-        if hasattr(approach, "handoff"):
-            assert approach.handoff is None
-        assert approach.title == "No context needed"
+        if hasattr(handoff, "handoff"):
+            assert handoff.handoff is None
+        assert handoff.title == "No context needed"
 
 
 class TestHandoffContextInInjection:
@@ -3504,7 +3637,7 @@ class TestHandoffContextInInjection:
         except ImportError:
             pytest.skip("HandoffContext not yet implemented")
 
-        approach_id = manager.approach_add("Feature with rich context")
+        handoff_id = manager.handoff_add("Feature with rich context")
 
         context = HandoffContext(
             summary="API layer done, frontend integration next",
@@ -3516,9 +3649,9 @@ class TestHandoffContextInInjection:
         )
 
         if hasattr(manager, "handoff_update_context"):
-            manager.handoff_update_context(approach_id, context)
+            manager.handoff_update_context(handoff_id, context)
 
-            output = manager.approach_inject()
+            output = manager.handoff_inject()
 
             assert "API layer done" in output or "summary" in output.lower()
 
@@ -3529,7 +3662,7 @@ class TestHandoffContextInInjection:
         except ImportError:
             pytest.skip("HandoffContext not yet implemented")
 
-        approach_id = manager.approach_add("File-focused work")
+        handoff_id = manager.handoff_add("File-focused work")
 
         context = HandoffContext(
             summary="Working on core",
@@ -3541,9 +3674,9 @@ class TestHandoffContextInInjection:
         )
 
         if hasattr(manager, "handoff_update_context"):
-            manager.handoff_update_context(approach_id, context)
+            manager.handoff_update_context(handoff_id, context)
 
-            output = manager.approach_inject()
+            output = manager.handoff_inject()
 
             assert "core/engine.py" in output or "engine" in output
 
@@ -3554,7 +3687,7 @@ class TestHandoffContextInInjection:
         except ImportError:
             pytest.skip("HandoffContext not yet implemented")
 
-        approach_id = manager.approach_add("Blocked work")
+        handoff_id = manager.handoff_add("Blocked work")
 
         context = HandoffContext(
             summary="Waiting on external",
@@ -3566,9 +3699,9 @@ class TestHandoffContextInInjection:
         )
 
         if hasattr(manager, "handoff_update_context"):
-            manager.handoff_update_context(approach_id, context)
+            manager.handoff_update_context(handoff_id, context)
 
-            output = manager.approach_inject()
+            output = manager.handoff_inject()
 
             assert "API key" in output or "blocker" in output.lower()
 
@@ -3579,7 +3712,7 @@ class TestHandoffContextInInjection:
         except ImportError:
             pytest.skip("HandoffContext not yet implemented")
 
-        approach_id = manager.approach_add("Git-tracked work")
+        handoff_id = manager.handoff_add("Git-tracked work")
 
         context = HandoffContext(
             summary="At commit point",
@@ -3591,9 +3724,9 @@ class TestHandoffContextInInjection:
         )
 
         if hasattr(manager, "handoff_update_context"):
-            manager.handoff_update_context(approach_id, context)
+            manager.handoff_update_context(handoff_id, context)
 
-            output = manager.approach_inject()
+            output = manager.handoff_inject()
 
             assert "ref7777" in output or "git" in output.lower()
 
@@ -3650,7 +3783,7 @@ class TestHashBasedIds:
 
 ## Active Handoffs
 
-### [A001] Legacy handoff with old ID
+### [hf-0000001] Legacy handoff with old ID
 - **Status**: in_progress | **Phase**: research | **Agent**: user
 - **Created**: 2025-12-28 | **Updated**: 2025-12-28
 - **Files**: test.py
@@ -3666,10 +3799,10 @@ class TestHashBasedIds:
         handoffs_file.write_text(old_format_content)
 
         # Should be able to get the old-format handoff
-        handoff = manager.handoff_get("A001")
+        handoff = manager.handoff_get("hf-0000001")
 
         assert handoff is not None
-        assert handoff.id == "A001"
+        assert handoff.id == "hf-0000001"
         assert handoff.title == "Legacy handoff with old ID"
 
     def test_old_ids_preserved(self, manager: "LessonsManager"):
@@ -3685,7 +3818,7 @@ class TestHashBasedIds:
 
 ## Active Handoffs
 
-### [A001] Legacy handoff
+### [hf-0000001] Legacy handoff
 - **Status**: not_started | **Phase**: research | **Agent**: user
 - **Created**: 2025-12-28 | **Updated**: 2025-12-28
 - **Files**:
@@ -3700,16 +3833,16 @@ class TestHashBasedIds:
         handoffs_file.write_text(old_format_content)
 
         # Update the handoff (triggers re-save)
-        manager.handoff_update_status("A001", "in_progress")
+        manager.handoff_update_status("hf-0000001", "in_progress")
 
         # Read back and verify ID is preserved
-        handoff = manager.handoff_get("A001")
+        handoff = manager.handoff_get("hf-0000001")
         assert handoff is not None
-        assert handoff.id == "A001"  # ID should NOT change to hash format
+        assert handoff.id == "hf-0000001"  # ID should NOT change to hash format
 
         # Verify in file content as well
         content = handoffs_file.read_text()
-        assert "[A001]" in content
+        assert "[hf-0000001]" in content
 
     def test_blocked_by_accepts_both_formats(self, manager: "LessonsManager"):
         """blocked_by field should work with both old A### and new hf- IDs."""
@@ -3724,7 +3857,7 @@ class TestHashBasedIds:
 
 ## Active Handoffs
 
-### [A001] Blocker handoff
+### [hf-0000001] Blocker handoff
 - **Status**: in_progress | **Phase**: research | **Agent**: user
 - **Created**: 2025-12-28 | **Updated**: 2025-12-28
 - **Files**:
@@ -3743,12 +3876,12 @@ class TestHashBasedIds:
         assert new_id.startswith("hf-")
 
         # Set blocked_by with both old and new format IDs
-        manager.handoff_update_blocked_by(new_id, ["A001", new_id])
+        manager.handoff_update_blocked_by(new_id, ["hf-0000001", new_id])
 
         # Verify blocked_by is stored correctly
         handoff = manager.handoff_get(new_id)
         assert handoff is not None
-        assert "A001" in handoff.blocked_by
+        assert "hf-0000001" in handoff.blocked_by
         assert new_id in handoff.blocked_by
 
 
@@ -3877,7 +4010,7 @@ class TestFileReferences:
 
 ## Active Handoffs
 
-### [A001] Legacy with old Files format
+### [hf-0000001] Legacy with old Files format
 - **Status**: in_progress | **Phase**: research | **Agent**: user
 - **Created**: {today} | **Updated**: {today}
 - **Files**: src/main.py, src/utils.py
@@ -3891,7 +4024,7 @@ class TestFileReferences:
 """
         handoffs_file.write_text(old_format_content)
 
-        handoff = manager.handoff_get("A001")
+        handoff = manager.handoff_get("hf-0000001")
         assert handoff is not None
         # Old files should be available via refs
         assert handoff.refs == ["src/main.py", "src/utils.py"]
@@ -5093,7 +5226,7 @@ class TestDependencyInferenceCLI:
 
 ## Active Handoffs
 
-### [A001] Main task
+### [hf-0000001] Main task
 - **Status**: not_started | **Phase**: research | **Agent**: user
 - **Created**: {today} | **Updated**: {today}
 - **Refs**:
@@ -5105,7 +5238,7 @@ class TestDependencyInferenceCLI:
 
 ---
 
-### [A002] Blocking task
+### [hf-0000002] Blocking task
 - **Status**: in_progress | **Phase**: research | **Agent**: user
 - **Created**: {today} | **Updated**: {today}
 - **Refs**:
@@ -5128,9 +5261,9 @@ class TestDependencyInferenceCLI:
                 "core.cli",
                 "handoff",
                 "update",
-                "A001",
+                "hf-0000001",
                 "--blocked-by",
-                "A002",
+                "hf-0000002",
             ],
             cwd=str(repo_root),
             env={
@@ -5143,16 +5276,16 @@ class TestDependencyInferenceCLI:
         )
 
         assert result.returncode == 0, result.stderr
-        assert "Updated A001 blocked_by to A002" in result.stdout
+        assert "Updated hf-0000001 blocked_by to hf-0000002" in result.stdout
 
         # Verify in manager
         manager = LessonsManager(
             lessons_base=temp_lessons_base,
             project_root=temp_project_root,
         )
-        handoff = manager.handoff_get("A001")
+        handoff = manager.handoff_get("hf-0000001")
         assert handoff is not None
-        assert handoff.blocked_by == ["A002"]
+        assert handoff.blocked_by == ["hf-0000002"]
 
     def test_cli_update_blocked_by_multiple_ids(
         self, temp_lessons_base: Path, temp_project_root: Path
@@ -5169,7 +5302,7 @@ class TestDependencyInferenceCLI:
 
 ## Active Handoffs
 
-### [A001] Main task
+### [hf-0000001] Main task
 - **Status**: not_started | **Phase**: research | **Agent**: user
 - **Created**: {today} | **Updated**: {today}
 - **Refs**:
@@ -5181,7 +5314,7 @@ class TestDependencyInferenceCLI:
 
 ---
 
-### [A002] First blocker
+### [hf-0000002] First blocker
 - **Status**: in_progress | **Phase**: research | **Agent**: user
 - **Created**: {today} | **Updated**: {today}
 - **Refs**:
@@ -5193,7 +5326,7 @@ class TestDependencyInferenceCLI:
 
 ---
 
-### [A003] Second blocker
+### [hf-0000003] Second blocker
 - **Status**: in_progress | **Phase**: research | **Agent**: user
 - **Created**: {today} | **Updated**: {today}
 - **Refs**:
@@ -5216,9 +5349,9 @@ class TestDependencyInferenceCLI:
                 "core.cli",
                 "handoff",
                 "update",
-                "A001",
+                "hf-0000001",
                 "--blocked-by",
-                "A002,A003",
+                "hf-0000002,hf-0000003",
             ],
             cwd=str(repo_root),
             env={
@@ -5231,16 +5364,16 @@ class TestDependencyInferenceCLI:
         )
 
         assert result.returncode == 0, result.stderr
-        assert "Updated A001 blocked_by to A002, A003" in result.stdout
+        assert "Updated hf-0000001 blocked_by to hf-0000002, hf-0000003" in result.stdout
 
         # Verify in manager
         manager = LessonsManager(
             lessons_base=temp_lessons_base,
             project_root=temp_project_root,
         )
-        handoff = manager.handoff_get("A001")
+        handoff = manager.handoff_get("hf-0000001")
         assert handoff is not None
-        assert set(handoff.blocked_by) == {"A002", "A003"}
+        assert set(handoff.blocked_by) == {"hf-0000002", "hf-0000003"}
 
     def test_cli_update_blocked_by_with_hf_ids(
         self, temp_lessons_base: Path, temp_project_root: Path
@@ -5286,10 +5419,10 @@ class TestDependencyInferenceCLI:
 
 
 class TestDependencyInferenceParsing:
-    """Tests for parsing blocked_by from APPROACH UPDATE patterns."""
+    """Tests for parsing blocked_by from HANDOFF UPDATE patterns."""
 
     def test_explicit_blocked_by_single(self, manager: "LessonsManager"):
-        """APPROACH UPDATE A001: blocked_by A002 should set single blocker."""
+        """HANDOFF UPDATE hf-0000001: blocked_by hf-0000002 should set single blocker."""
         handoffs_file = manager.project_handoffs_file
         handoffs_file.parent.mkdir(parents=True, exist_ok=True)
         today = date.today().isoformat()
@@ -5300,7 +5433,7 @@ class TestDependencyInferenceParsing:
 
 ## Active Handoffs
 
-### [A001] Main task
+### [hf-0000001] Main task
 - **Status**: not_started | **Phase**: research | **Agent**: user
 - **Created**: {today} | **Updated**: {today}
 - **Refs**:
@@ -5314,14 +5447,14 @@ class TestDependencyInferenceParsing:
 """)
 
         # Simulate what stop-hook would do
-        manager.handoff_update_blocked_by("A001", ["A002"])
+        manager.handoff_update_blocked_by("hf-0000001", ["hf-0000002"])
 
-        handoff = manager.handoff_get("A001")
+        handoff = manager.handoff_get("hf-0000001")
         assert handoff is not None
-        assert handoff.blocked_by == ["A002"]
+        assert handoff.blocked_by == ["hf-0000002"]
 
     def test_explicit_blocked_by_multiple(self, manager: "LessonsManager"):
-        """APPROACH UPDATE A001: blocked_by A002,A003 should set multiple blockers."""
+        """HANDOFF UPDATE hf-0000001: blocked_by hf-0000002,hf-0000003 should set multiple blockers."""
         handoffs_file = manager.project_handoffs_file
         handoffs_file.parent.mkdir(parents=True, exist_ok=True)
         today = date.today().isoformat()
@@ -5332,7 +5465,7 @@ class TestDependencyInferenceParsing:
 
 ## Active Handoffs
 
-### [A001] Main task
+### [hf-0000001] Main task
 - **Status**: not_started | **Phase**: research | **Agent**: user
 - **Created**: {today} | **Updated**: {today}
 - **Refs**:
@@ -5346,18 +5479,18 @@ class TestDependencyInferenceParsing:
 """)
 
         # Simulate what stop-hook would do with comma-separated IDs
-        manager.handoff_update_blocked_by("A001", ["A002", "A003"])
+        manager.handoff_update_blocked_by("hf-0000001", ["hf-0000002", "hf-0000003"])
 
-        handoff = manager.handoff_get("A001")
+        handoff = manager.handoff_get("hf-0000001")
         assert handoff is not None
-        assert set(handoff.blocked_by) == {"A002", "A003"}
+        assert set(handoff.blocked_by) == {"hf-0000002", "hf-0000003"}
 
 
 class TestDependencyInferencePatterns:
     """Tests for inferring blocked_by from natural language patterns."""
 
     def test_infer_waiting_for_pattern(self, manager: "LessonsManager"):
-        """'waiting for A002' in next_steps should infer blocked_by A002."""
+        """'waiting for hf-0000002' in next_steps should infer blocked_by hf-0000002."""
         handoffs_file = manager.project_handoffs_file
         handoffs_file.parent.mkdir(parents=True, exist_ok=True)
         today = date.today().isoformat()
@@ -5368,7 +5501,7 @@ class TestDependencyInferencePatterns:
 
 ## Active Handoffs
 
-### [A001] Main task
+### [hf-0000001] Main task
 - **Status**: not_started | **Phase**: research | **Agent**: user
 - **Created**: {today} | **Updated**: {today}
 - **Refs**:
@@ -5380,7 +5513,7 @@ class TestDependencyInferencePatterns:
 
 ---
 
-### [A002] Blocking task
+### [hf-0000002] Blocking task
 - **Status**: in_progress | **Phase**: research | **Agent**: user
 - **Created**: {today} | **Updated**: {today}
 - **Refs**:
@@ -5396,14 +5529,14 @@ class TestDependencyInferencePatterns:
         # Test the shell function via Python emulation
         # The actual inference happens in stop-hook.sh, but we test the Python side
         # by verifying that update_blocked_by works correctly
-        manager.handoff_update_blocked_by("A001", ["A002"])
+        manager.handoff_update_blocked_by("hf-0000001", ["hf-0000002"])
 
-        handoff = manager.handoff_get("A001")
+        handoff = manager.handoff_get("hf-0000001")
         assert handoff is not None
-        assert "A002" in handoff.blocked_by
+        assert "hf-0000002" in handoff.blocked_by
 
     def test_infer_blocked_by_pattern(self, manager: "LessonsManager"):
-        """'blocked by A003' in next_steps should infer blocked_by A003."""
+        """'blocked by hf-0000003' in next_steps should infer blocked_by hf-0000003."""
         handoffs_file = manager.project_handoffs_file
         handoffs_file.parent.mkdir(parents=True, exist_ok=True)
         today = date.today().isoformat()
@@ -5414,7 +5547,7 @@ class TestDependencyInferencePatterns:
 
 ## Active Handoffs
 
-### [A001] Main task
+### [hf-0000001] Main task
 - **Status**: not_started | **Phase**: research | **Agent**: user
 - **Created**: {today} | **Updated**: {today}
 - **Refs**:
@@ -5427,11 +5560,11 @@ class TestDependencyInferencePatterns:
 ---
 """)
 
-        manager.handoff_update_blocked_by("A001", ["A003"])
+        manager.handoff_update_blocked_by("hf-0000001", ["hf-0000003"])
 
-        handoff = manager.handoff_get("A001")
+        handoff = manager.handoff_get("hf-0000001")
         assert handoff is not None
-        assert "A003" in handoff.blocked_by
+        assert "hf-0000003" in handoff.blocked_by
 
     def test_infer_depends_on_pattern(self, manager: "LessonsManager"):
         """'depends on hf-abc1234' in next_steps should infer blocked_by hf-abc1234."""
@@ -5445,7 +5578,7 @@ class TestDependencyInferencePatterns:
         assert blocker_id in handoff.blocked_by
 
     def test_infer_after_completes_pattern(self, manager: "LessonsManager"):
-        """'after A002 completes' in next_steps should infer blocked_by A002."""
+        """'after hf-0000002 completes' in next_steps should infer blocked_by hf-0000002."""
         handoffs_file = manager.project_handoffs_file
         handoffs_file.parent.mkdir(parents=True, exist_ok=True)
         today = date.today().isoformat()
@@ -5456,7 +5589,7 @@ class TestDependencyInferencePatterns:
 
 ## Active Handoffs
 
-### [A001] Main task
+### [hf-0000001] Main task
 - **Status**: not_started | **Phase**: research | **Agent**: user
 - **Created**: {today} | **Updated**: {today}
 - **Refs**:
@@ -5469,11 +5602,11 @@ class TestDependencyInferencePatterns:
 ---
 """)
 
-        manager.handoff_update_blocked_by("A001", ["A002"])
+        manager.handoff_update_blocked_by("hf-0000001", ["hf-0000002"])
 
-        handoff = manager.handoff_get("A001")
+        handoff = manager.handoff_get("hf-0000001")
         assert handoff is not None
-        assert "A002" in handoff.blocked_by
+        assert "hf-0000002" in handoff.blocked_by
 
 
 class TestDependencyInferencePrecedence:
@@ -5491,12 +5624,12 @@ class TestDependencyInferencePrecedence:
 
 ## Active Handoffs
 
-### [A001] Main task
+### [hf-0000001] Main task
 - **Status**: not_started | **Phase**: research | **Agent**: user
 - **Created**: {today} | **Updated**: {today}
 - **Refs**:
 - **Description**: Test handoff
-- **Blocked By**: A002
+- **Blocked By**: hf-0000002
 
 **Tried**:
 
@@ -5506,12 +5639,12 @@ class TestDependencyInferencePrecedence:
 """)
 
         # Explicit update should replace existing blockers
-        manager.handoff_update_blocked_by("A001", ["A003", "A004"])
+        manager.handoff_update_blocked_by("hf-0000001", ["hf-0000003", "A004"])
 
-        handoff = manager.handoff_get("A001")
+        handoff = manager.handoff_get("hf-0000001")
         assert handoff is not None
-        assert set(handoff.blocked_by) == {"A003", "A004"}
-        assert "A002" not in handoff.blocked_by
+        assert set(handoff.blocked_by) == {"hf-0000003", "A004"}
+        assert "hf-0000002" not in handoff.blocked_by
 
     def test_clear_blocked_by_with_empty_list(self, manager: "LessonsManager"):
         """Setting blocked_by to empty list should clear all blockers."""
@@ -5525,12 +5658,12 @@ class TestDependencyInferencePrecedence:
 
 ## Active Handoffs
 
-### [A001] Main task
+### [hf-0000001] Main task
 - **Status**: not_started | **Phase**: research | **Agent**: user
 - **Created**: {today} | **Updated**: {today}
 - **Refs**:
 - **Description**: Test handoff
-- **Blocked By**: A002, A003
+- **Blocked By**: hf-0000002, hf-0000003
 
 **Tried**:
 
@@ -5539,9 +5672,9 @@ class TestDependencyInferencePrecedence:
 ---
 """)
 
-        manager.handoff_update_blocked_by("A001", [])
+        manager.handoff_update_blocked_by("hf-0000001", [])
 
-        handoff = manager.handoff_get("A001")
+        handoff = manager.handoff_get("hf-0000001")
         assert handoff is not None
         assert handoff.blocked_by == []
 
@@ -5598,24 +5731,24 @@ infer_blocked_by() {
 }
 
 # Test cases
-echo "Test 1: waiting for A002"
-result=$(infer_blocked_by "waiting for A002")
+echo "Test 1: waiting for hf-0000002"
+result=$(infer_blocked_by "waiting for hf-0000002")
 echo "Result: $result"
 
 echo "Test 2: blocked by hf-abc1234"
 result=$(infer_blocked_by "blocked by hf-abc1234")
 echo "Result: $result"
 
-echo "Test 3: depends on A003"
-result=$(infer_blocked_by "depends on A003")
+echo "Test 3: depends on hf-0000003"
+result=$(infer_blocked_by "depends on hf-0000003")
 echo "Result: $result"
 
-echo "Test 4: after A001 completes"
-result=$(infer_blocked_by "after A001 completes")
+echo "Test 4: after hf-0000001 completes"
+result=$(infer_blocked_by "after hf-0000001 completes")
 echo "Result: $result"
 
 echo "Test 5: multiple patterns"
-result=$(infer_blocked_by "waiting for A002 and blocked by A003")
+result=$(infer_blocked_by "waiting for hf-0000002 and blocked by hf-0000003")
 echo "Result: $result"
 
 echo "Test 6: no patterns"
@@ -5632,10 +5765,10 @@ echo "Result: $result"
         # Check results - the output should contain the expected blocker IDs
         output = result.stdout
         assert "Test 1" in output
-        assert "A002" in output
+        assert "hf-0000002" in output
         assert "hf-abc1234" in output
-        assert "A003" in output
-        assert "A001" in output
+        assert "hf-0000003" in output
+        assert "hf-0000001" in output
 
     def test_infer_blocked_by_with_hf_format(self, temp_project_root: Path):
         """Test infer_blocked_by handles hf-XXXXXXX format IDs."""

@@ -107,6 +107,21 @@ $handoffs"
         fi
     fi
 
+    # Check for session snapshot from previous session (saved by precompact hook when no handoff existed)
+    local snapshot_file="$cwd/.claude-recall/.session-snapshot"
+    if [[ -f "$snapshot_file" ]]; then
+        local snapshot_content
+        snapshot_content=$(cat "$snapshot_file")
+        summary="$summary
+
+## Previous Session (no handoff was active)
+$snapshot_content
+Consider creating a handoff if continuing this work."
+        # Clean up snapshot after injecting
+        rm -f "$snapshot_file"
+        echo "[inject] Loaded session snapshot from previous session" >&2
+    fi
+
     # Generate user-visible feedback (stderr)
     local sys_count=0 proj_count=0
     if [[ "$summary" =~ LESSONS\ \(([0-9]+)S,\ ([0-9]+)L ]]; then
@@ -144,14 +159,35 @@ $handoffs"
     fi
 
     if [[ -n "$summary" ]]; then
+        # Check for ready_for_review handoffs that need lesson extraction
+        local review_ids=""
+        if [[ -n "$handoffs" ]] && echo "$handoffs" | grep -q "ready_for_review"; then
+            # Extract handoff IDs that have ready_for_review status
+            review_ids=$(echo "$handoffs" | grep -B2 "ready_for_review" | grep -oE '\[hf-[0-9a-f]+\]' | tr -d '[]' | tr '\n' ' ' | sed 's/ $//')
+        fi
+
+        # Add lesson review duty if there are handoffs ready for review
+        if [[ -n "$review_ids" ]]; then
+            summary="$summary
+
+LESSON REVIEW DUTY: Handoff(s) [$review_ids] completed all work.
+  1. Review the tried steps above with the user
+  2. ASK: \"Any lessons to extract from this work? Patterns, gotchas, or decisions worth recording?\"
+  3. Record any lessons the user wants to keep
+  4. Then output: HANDOFF COMPLETE $review_ids"
+        fi
+
         # Add lesson duty reminder
         summary="$summary
 
 LESSON DUTY: When user corrects you, something fails, or you discover a pattern:
   ASK: \"Should I record this as a lesson? [category]: title - content\"
 
-WORK TRACKING: Use TodoWrite for multi-step work - it auto-syncs to persistent handoffs.
-  Your todos are automatically saved to HANDOFFS.md and restored next session."
+HANDOFF DUTY: For MAJOR work (3+ files, multi-step, integration), you MUST:
+  1. Use TodoWrite to track progress - todos auto-sync to handoffs
+  2. If working without TodoWrite, output: HANDOFF: title
+  MAJOR = new feature, 4+ files, architectural, integration, refactoring
+  MINOR = single-file fix, config, docs (no handoff needed)"
 
         # Add todo continuation if available
         if [[ -n "$todo_continuation" ]]; then

@@ -117,7 +117,7 @@ class HandoffsMixin:
     """
 
     # Valid status and outcome values
-    VALID_STATUSES = {"not_started", "in_progress", "blocked", "completed"}
+    VALID_STATUSES = {"not_started", "in_progress", "blocked", "ready_for_review", "completed"}
     VALID_OUTCOMES = {"success", "fail", "partial"}
     VALID_PHASES = {"research", "planning", "implementing", "review"}
     VALID_AGENTS = {"explore", "general-purpose", "plan", "review", "user"}
@@ -1577,10 +1577,16 @@ Consider extracting lessons about:
                         refs_str = " | ".join(handoff.refs[:3]) + f" (+{len(handoff.refs) - 3} more)"
                     lines.append(f"- **Refs**: {refs_str}")
 
-                # Compact tried steps summary (not full list)
+                # Show tried steps - full list for ready_for_review, summary otherwise
                 if handoff.tried:
-                    summary_lines = self._summarize_tried_steps(handoff.tried)
-                    lines.extend(summary_lines)
+                    if handoff.status == "ready_for_review":
+                        # Full list for lesson extraction review
+                        lines.append(f"- **Tried** ({len(handoff.tried)} steps):")
+                        for step in handoff.tried:
+                            lines.append(f"  - [{step.outcome}] {step.description}")
+                    else:
+                        summary_lines = self._summarize_tried_steps(handoff.tried)
+                        lines.extend(summary_lines)
 
                 # Show checkpoint prominently if present (legacy, key for session handoff)
                 if handoff.checkpoint:
@@ -1672,7 +1678,22 @@ Consider extracting lessons about:
             first_todo = todos[0].get("content", "Work in progress")
             # Truncate title to 50 chars
             title = first_todo[:50] + ("..." if len(first_todo) > 50 else "")
-            handoff_id = self.handoff_add(title=title)
+
+            # Infer phase from todo content
+            combined_content = " ".join(t.get("content", "") for t in todos).lower()
+            if any(kw in combined_content for kw in ["implement", "build", "create", "add", "fix", "write", "edit", "update"]):
+                phase = "implementing"
+            elif any(kw in combined_content for kw in ["research", "investigate", "explore", "understand", "find"]):
+                phase = "research"
+            elif any(kw in combined_content for kw in ["plan", "design", "architect"]):
+                phase = "planning"
+            elif any(kw in combined_content for kw in ["review", "test", "verify", "check"]):
+                phase = "review"
+            else:
+                phase = "implementing"  # Default for TodoWrite-created handoffs
+
+            handoff_id = self.handoff_add(title=title, phase=phase)
+            # handoff_add already logs creation via debug_logger
 
         # Sync completed todos as tried entries (success)
         # Only add new ones - check if description already exists
@@ -1702,9 +1723,14 @@ Consider extracting lessons about:
             self.handoff_update_next(handoff_id, next_text)
 
         # Update status based on todo states
-        if in_progress:
+        if completed and not pending and not in_progress:
+            # All todos completed, nothing pending - ready for lesson review
+            self.handoff_update_status(handoff_id, "ready_for_review")
+        elif completed or in_progress:
+            # Work has been done or is in progress - at least in_progress
             self.handoff_update_status(handoff_id, "in_progress")
         elif pending and not completed:
+            # Only pending items, no work done yet
             self.handoff_update_status(handoff_id, "not_started")
 
         logger = get_logger()

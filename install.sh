@@ -174,6 +174,7 @@ install_core() {
     mkdir -p "$CLAUDE_RECALL_STATE"  # XDG state dir for logs
     cp "$SCRIPT_DIR/core/lessons-manager.sh" "$CLAUDE_RECALL_BASE/"
     # Copy all Python modules (new modular structure)
+    cp "$SCRIPT_DIR/core/_version.py" "$CLAUDE_RECALL_BASE/"
     cp "$SCRIPT_DIR/core/cli.py" "$CLAUDE_RECALL_BASE/"
     cp "$SCRIPT_DIR/core/manager.py" "$CLAUDE_RECALL_BASE/"
     cp "$SCRIPT_DIR/core/models.py" "$CLAUDE_RECALL_BASE/"

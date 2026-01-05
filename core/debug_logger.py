@@ -48,13 +48,13 @@ def _get_debug_level() -> int:
     """Get the configured debug level from environment.
 
     Checks environment variables in order of precedence:
-    CLAUDE_RECALL_DEBUG → RECALL_DEBUG → LESSONS_DEBUG → 0
+    CLAUDE_RECALL_DEBUG → RECALL_DEBUG → LESSONS_DEBUG → 1 (default)
     """
     level = (
         os.environ.get(DEBUG_ENV_VAR) or
         os.environ.get(DEBUG_ENV_VAR_FALLBACK) or
         os.environ.get(DEBUG_ENV_VAR_LEGACY) or
-        "0"
+        "1"  # Default to info-level logging
     )
     try:
         return int(level)
@@ -132,6 +132,12 @@ class DebugLogger:
         event["timestamp"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         event["session_id"] = _get_session_id()
         event["pid"] = os.getpid()
+
+        # Add project context from env (set by hooks)
+        project_dir = os.environ.get("PROJECT_DIR", "")
+        if project_dir:
+            # Use last path component as short identifier
+            event["project"] = Path(project_dir).name
 
         try:
             self._log_path.parent.mkdir(parents=True, exist_ok=True)

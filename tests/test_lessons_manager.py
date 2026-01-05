@@ -57,14 +57,6 @@ def temp_lessons_base(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def temp_state_dir(tmp_path: Path) -> Path:
-    """Create a temporary state directory for system lessons and state files."""
-    state_dir = tmp_path / ".local" / "state" / "claude-recall"
-    state_dir.mkdir(parents=True)
-    return state_dir
-
-
-@pytest.fixture
 def temp_project_root(tmp_path: Path) -> Path:
     """Create a temporary project directory with .git folder."""
     project = tmp_path / "project"
@@ -74,10 +66,11 @@ def temp_project_root(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def manager(temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch) -> "LessonsManager":
-    """Create a LessonsManager instance with temporary paths."""
-    # Set CLAUDE_RECALL_STATE so _get_state_dir() uses temp directory
-    monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+def manager(temp_lessons_base: Path, temp_project_root: Path) -> "LessonsManager":
+    """Create a LessonsManager instance with temporary paths.
+
+    Note: CLAUDE_RECALL_STATE is set by conftest.py autouse fixture.
+    """
     return LessonsManager(
         lessons_base=temp_lessons_base,
         project_root=temp_project_root,

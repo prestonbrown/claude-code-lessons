@@ -69,11 +69,12 @@ def clean_env(monkeypatch):
 class TestDebugLevel:
     """Test debug level parsing."""
 
-    def test_disabled_by_default(self, monkeypatch):
-        """Logger should be disabled when CLAUDE_RECALL_DEBUG is not set."""
+    def test_enabled_by_default(self, monkeypatch):
+        """Logger should be enabled (level 1) when CLAUDE_RECALL_DEBUG is not set."""
         monkeypatch.delenv("CLAUDE_RECALL_DEBUG", raising=False)
+        monkeypatch.delenv("RECALL_DEBUG", raising=False)
         monkeypatch.delenv("LESSONS_DEBUG", raising=False)
-        assert _get_debug_level() == 0
+        assert _get_debug_level() == 1
 
     def test_level_0_disabled(self, monkeypatch):
         """Level 0 should disable logging."""
@@ -241,32 +242,32 @@ class TestJsonLinesOutput:
         assert entry["velocity_after"] == 3.0
         assert entry["promotion_ready"] is False
 
-    def test_approach_events(self, monkeypatch, temp_state_dir):
-        """Should log handoff lifecycle events (backward compat: approach_* aliases)."""
+    def test_handoff_events(self, monkeypatch, temp_state_dir):
+        """Should log handoff lifecycle events."""
         monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
         monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "1")
 
         logger = DebugLogger()
 
-        # Created event (using backward compat alias)
-        logger.approach_created(
-            approach_id="A001",
-            title="Test approach",
+        # Created event
+        logger.handoff_created(
+            handoff_id="H001",
+            title="Test handoff",
             phase="research",
             agent="user",
         )
 
-        # Change event (using backward compat alias)
-        logger.approach_change(
-            approach_id="A001",
+        # Change event
+        logger.handoff_change(
+            handoff_id="H001",
             action="phase_change",
             old_value="research",
             new_value="implementing",
         )
 
-        # Completed event (using backward compat alias)
-        logger.approach_completed(
-            approach_id="A001",
+        # Completed event
+        logger.handoff_completed(
+            handoff_id="H001",
             tried_count=3,
             duration_days=5,
         )
@@ -276,9 +277,8 @@ class TestJsonLinesOutput:
         assert len(lines) == 3
 
         created = json.loads(lines[0])
-        # New event name is handoff_created (approach_created is backward compat alias)
         assert created["event"] == "handoff_created"
-        assert created["handoff_id"] == "A001"
+        assert created["handoff_id"] == "H001"
 
         changed = json.loads(lines[1])
         assert changed["event"] == "handoff_change"
