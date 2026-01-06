@@ -1003,6 +1003,13 @@ No explanations, just ID: SCORE lines."""
                     lessons.append(lesson)
                     idx = end_idx
                 else:
+                    # Log parse failures - prevents silent data loss
+                    logger = get_logger()
+                    logger.error(
+                        operation="parse_lesson",
+                        error=f"Failed to parse at line {idx + 1}",
+                        context={"line": lines[idx][:60]},
+                    )
                     idx += 1
             else:
                 idx += 1
@@ -1011,6 +1018,14 @@ No explanations, just ID: SCORE lines."""
 
     def _write_lessons_file(self, file_path: Path, lessons: List[Lesson], level: str) -> None:
         """Write lessons back to file."""
+        # Sort lessons by numerical ID for consistent ordering
+        def lesson_sort_key(lesson: Lesson) -> int:
+            try:
+                return int(lesson.id[1:])  # L001 -> 1, S042 -> 42
+            except ValueError:
+                return 9999  # Put malformed IDs at end
+        lessons = sorted(lessons, key=lesson_sort_key)
+
         # Read existing header
         header = ""
         if file_path.exists():
