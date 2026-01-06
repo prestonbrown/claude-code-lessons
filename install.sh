@@ -197,7 +197,10 @@ install_core() {
     # Install recall-watch command
     if [[ -f "$SCRIPT_DIR/bin/recall-watch" ]]; then
         mkdir -p "$HOME/.local/bin"
-        cp "$SCRIPT_DIR/bin/recall-watch" "$HOME/.local/bin/"
+        # Skip if source and dest are the same (dev environment)
+        if [[ ! "$SCRIPT_DIR/bin/recall-watch" -ef "$HOME/.local/bin/recall-watch" ]]; then
+            cp "$SCRIPT_DIR/bin/recall-watch" "$HOME/.local/bin/"
+        fi
         chmod +x "$HOME/.local/bin/recall-watch"
         log_success "Installed recall-watch to ~/.local/bin/"
 
@@ -234,6 +237,32 @@ install_core() {
 
 EOF
         log_success "Created system lessons file in state directory"
+    fi
+}
+
+install_venv() {
+    log_info "Setting up Python virtual environment for TUI..."
+
+    local venv_dir="$CLAUDE_RECALL_BASE/.venv"
+
+    # Create venv if it doesn't exist
+    if [[ ! -d "$venv_dir" ]]; then
+        if ! python3 -m venv "$venv_dir" 2>/dev/null; then
+            log_warn "Could not create virtual environment (python3-venv may not be installed)"
+            log_info "TUI will require manual: pip install textual textual-plotext"
+            return 0
+        fi
+        log_success "Created virtual environment"
+    fi
+
+    # Install TUI dependencies
+    log_info "Installing TUI dependencies (textual, rich)..."
+    if "$venv_dir/bin/pip" install --quiet --upgrade pip 2>/dev/null && \
+       "$venv_dir/bin/pip" install --quiet textual textual-plotext 2>/dev/null; then
+        log_success "Installed TUI dependencies"
+    else
+        log_warn "Could not install TUI dependencies (network issue?)"
+        log_info "TUI will require manual: pip install textual textual-plotext"
     fi
 }
 
@@ -546,12 +575,14 @@ main() {
             check_deps
             migrate_config
             install_core
+            install_venv
             install_claude
             ;;
         --opencode)
             check_deps
             migrate_config
             install_core
+            install_venv
             install_opencode
             ;;
         --help|-h)
@@ -582,6 +613,7 @@ main() {
             check_deps
             migrate_config
             install_core
+            install_venv
 
             local tools=$(detect_tools)
             local installed=0

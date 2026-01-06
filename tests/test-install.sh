@@ -389,13 +389,56 @@ test_auto_detect_claude() {
 
 test_system_lessons_file_format() {
     "$INSTALLER" --claude >/dev/null 2>&1 || true
-    
+
     local content
     content=$(cat "$CLAUDE_RECALL_BASE/LESSONS.md")
-    
+
     assert_contains "$content" "System Level" "Should indicate system level"
     assert_contains "$content" "[S###]" "Should explain system lesson format"
     assert_contains "$content" "Active Lessons" "Should have Active Lessons header"
+}
+
+test_install_creates_venv() {
+    local output
+    output=$("$INSTALLER" --claude 2>&1) || true
+
+    assert_dir_exists "$CLAUDE_RECALL_BASE/.venv" "Venv directory should be created"
+    assert_file_exists "$CLAUDE_RECALL_BASE/.venv/bin/python3" "Venv should have python3"
+    assert_file_exists "$CLAUDE_RECALL_BASE/.venv/bin/pip" "Venv should have pip"
+}
+
+test_install_venv_has_textual() {
+    local output
+    output=$("$INSTALLER" --claude 2>&1) || true
+
+    # Verify textual is installed
+    local textual_check
+    textual_check=$("$CLAUDE_RECALL_BASE/.venv/bin/python3" -c "import textual; print('ok')" 2>&1) || true
+    assert_eq "ok" "$textual_check" "Textual should be importable in venv"
+}
+
+test_install_venv_has_textual_plotext() {
+    local output
+    output=$("$INSTALLER" --claude 2>&1) || true
+
+    # Verify textual-plotext is installed
+    local plotext_check
+    plotext_check=$("$CLAUDE_RECALL_BASE/.venv/bin/python3" -c "import textual_plotext; print('ok')" 2>&1) || true
+    assert_eq "ok" "$plotext_check" "textual-plotext should be importable in venv"
+}
+
+test_install_venv_idempotent() {
+    # Install twice - venv should not be recreated
+    "$INSTALLER" --claude >/dev/null 2>&1 || true
+
+    # Mark the venv with a file
+    touch "$CLAUDE_RECALL_BASE/.venv/marker"
+
+    # Install again
+    "$INSTALLER" --claude >/dev/null 2>&1 || true
+
+    # Marker should still exist (venv wasn't recreated)
+    assert_file_exists "$CLAUDE_RECALL_BASE/.venv/marker" "Venv should not be recreated on reinstall"
 }
 
 # =============================================================================
@@ -422,7 +465,13 @@ main() {
     run_test "creates backup" test_install_creates_backup
     run_test "idempotent install" test_idempotent_install
     run_test "system lessons file format" test_system_lessons_file_format
-    
+
+    # Venv/TUI setup
+    run_test "install creates venv" test_install_creates_venv
+    run_test "install venv has textual" test_install_venv_has_textual
+    run_test "install venv has textual-plotext" test_install_venv_has_textual_plotext
+    run_test "install venv idempotent" test_install_venv_idempotent
+
     # Migration
     run_test "migrate system lessons" test_migrate_system_lessons
     run_test "migrate project lessons" test_migrate_project_lessons
