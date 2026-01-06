@@ -131,7 +131,7 @@ main() {
         local context="RELEVANT LESSONS for your query:
 $scored_lessons
 
-Cite lessons with [L###] or [S###] when applying them."
+Cite [ID] when applying. LESSON: to add."
 
         local escaped=$(printf '%s' "$context" | jq -Rs .)
         cat << EOF

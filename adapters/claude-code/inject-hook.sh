@@ -251,6 +251,9 @@ LESSON REVIEW DUTY: Handoff(s) [$review_ids] completed all work.
 
 LESSON DUTY: When user corrects you, something fails, or you discover a pattern:
   ASK: \"Should I record this as a lesson? [category]: title - content\"
+  CITE: When applying a lesson, say \"Applying [L###]: ...\"
+  BEFORE git/implementing: Check if high-star lessons apply
+  AFTER mistakes: Cite the violated lesson, propose new if novel"
 
 HANDOFF DUTY: For MAJOR work (3+ files, multi-step, integration), you MUST:
   1. Use TodoWrite to track progress - todos auto-sync to handoffs

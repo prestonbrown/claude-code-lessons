@@ -343,41 +343,7 @@ EOF
     else
         echo "$hooks_config" | jq '.' > "$settings_file"
     fi
-    
-    # Add instructions to CLAUDE.md
-    local claude_md="$claude_dir/CLAUDE.md"
-    local lessons_section='
-## Claude Recall (Dynamic Learning)
 
-A tiered cache that tracks corrections/patterns across sessions.
-
-- **Project lessons** (`[L###]`): `.claude-recall/LESSONS.md`
-- **System lessons** (`[S###]`): `~/.local/state/claude-recall/LESSONS.md`
-
-**Commands**: `LESSON: title - content` or `SYSTEM LESSON: title - content`
-**Cite**: Reference `[L001]` when applying lessons.
-**View**: `/lessons` command
-'
-
-    if [[ -f "$claude_md" ]]; then
-        # Check if old locations are referenced and need updating
-        if grep -q "\.claude/LESSONS\.md\|\.coding-agent-lessons\|~/.config/coding-agent-lessons" "$claude_md"; then
-            log_info "Updating old paths in CLAUDE.md..."
-            sed -i.bak \
-                -e 's|\.claude/LESSONS\.md|.claude-recall/LESSONS.md|g' \
-                -e 's|~/.claude/LESSONS\.md|~/.config/claude-recall/LESSONS.md|g' \
-                -e 's|\.coding-agent-lessons|.claude-recall|g' \
-                -e 's|~/.config/coding-agent-lessons|~/.config/claude-recall|g' \
-                "$claude_md"
-            rm -f "${claude_md}.bak"
-            log_success "Updated CLAUDE.md with new paths"
-        elif ! grep -q "Claude Recall\|Lessons System" "$claude_md"; then
-            echo "$lessons_section" >> "$claude_md"
-        fi
-    else
-        echo "# Global Claude Code Instructions" > "$claude_md"
-        echo "$lessons_section" >> "$claude_md"
-    fi
 
     log_success "Installed Claude Code adapter"
 }

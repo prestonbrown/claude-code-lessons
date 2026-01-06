@@ -187,20 +187,6 @@ test_install_claude_settings() {
     assert_contains "$content" "Stop" "Settings should have Stop hook"
 }
 
-test_install_claude_updates_claude_md() {
-    local output
-    output=$("$INSTALLER" --claude 2>&1) || true
-    
-    local claude_md="$HOME/.claude/CLAUDE.md"
-    assert_file_exists "$claude_md" "CLAUDE.md should exist"
-    
-    local content
-    content=$(cat "$claude_md")
-    assert_contains "$content" "Lessons System" "CLAUDE.md should mention Lessons System"
-    assert_contains "$content" "[L###]" "CLAUDE.md should explain project lesson IDs"
-    assert_contains "$content" "[S###]" "CLAUDE.md should explain system lesson IDs"
-}
-
 test_install_preserves_existing_settings() {
     # Create existing settings
     mkdir -p "$HOME/.claude"
@@ -357,13 +343,13 @@ test_idempotent_install() {
     "$INSTALLER" --claude >/dev/null 2>&1 || true
     local output
     output=$("$INSTALLER" --claude 2>&1) || true
-    
-    # Should not fail and should not duplicate content
-    local claude_md="$HOME/.claude/CLAUDE.md"
+
+    # Should not fail and should not duplicate hooks in settings
+    local settings="$HOME/.claude/settings.json"
     local count
-    count=$(grep -c "Lessons System" "$claude_md" || echo 0)
-    
-    assert_eq "1" "$count" "Lessons System section should appear only once"
+    count=$(grep -c "SessionStart" "$settings" || echo 0)
+
+    assert_eq "1" "$count" "SessionStart hook should appear only once"
 }
 
 test_opencode_install() {
@@ -460,7 +446,6 @@ main() {
     run_test "install Claude hooks" test_install_claude_hooks
     run_test "install Claude command" test_install_claude_command
     run_test "install Claude settings" test_install_claude_settings
-    run_test "install updates CLAUDE.md" test_install_claude_updates_claude_md
     run_test "preserves existing settings" test_install_preserves_existing_settings
     run_test "creates backup" test_install_creates_backup
     run_test "idempotent install" test_idempotent_install
