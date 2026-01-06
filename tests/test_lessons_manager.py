@@ -2378,6 +2378,112 @@ class TestInjectionFraming:
         assert "dangerous thing" in output or "NEVER:" in output
 
 
+class TestSessionStartLogging:
+    """Regression tests for session_start logging.
+
+    These tests ensure that session_start is always logged during inject_context(),
+    even when no lessons exist. This was a bug where early return skipped logging.
+    """
+
+    def test_inject_context_logs_session_start_even_when_empty(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """Ensure session_start is logged even when no lessons exist."""
+        from core import LessonsManager
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "1")
+
+        # Reset logger to pick up new env
+        from core.debug_logger import reset_logger
+        reset_logger()
+
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # Don't add any lessons - should still log session_start
+        result = manager.inject_context(top_n=5)
+
+        # Verify empty result
+        assert result.total_count == 0
+
+        # Verify session_start was logged
+        log_file = temp_state_dir / "debug.log"
+        assert log_file.exists(), "Debug log file should be created"
+        logs = log_file.read_text()
+        assert '"event": "session_start"' in logs, "session_start event should be logged"
+        assert '"total_lessons": 0' in logs, "total_lessons should be 0"
+
+    def test_inject_context_logs_session_start_with_lessons(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """Ensure session_start is logged when lessons exist."""
+        from core import LessonsManager
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "1")
+
+        # Reset logger to pick up new env
+        from core.debug_logger import reset_logger
+        reset_logger()
+
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson(level="project", category="test", title="Test", content="Content")
+
+        result = manager.inject_context(top_n=5)
+
+        assert result.total_count == 1
+
+        log_file = temp_state_dir / "debug.log"
+        assert log_file.exists(), "Debug log file should be created"
+        logs = log_file.read_text()
+        assert '"event": "session_start"' in logs, "session_start event should be logged"
+        assert '"total_lessons": 1' in logs, "total_lessons should be 1"
+
+
+class TestInjectErrorLogging:
+    """Tests for inject_error logging functionality."""
+
+    def test_inject_error_logs_to_debug_file(
+        self, temp_state_dir: Path, monkeypatch
+    ):
+        """Ensure inject_error writes to debug log."""
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "1")
+
+        from core.debug_logger import get_logger, reset_logger
+        reset_logger()
+
+        logger = get_logger()
+        logger.inject_error("test_event", "Test error message")
+
+        log_file = temp_state_dir / "debug.log"
+        assert log_file.exists(), "Debug log file should be created"
+        logs = log_file.read_text()
+        assert '"event": "inject_error"' in logs
+        assert '"error_event": "test_event"' in logs
+        assert "Test error message" in logs
+
+    def test_inject_error_truncates_long_messages(
+        self, temp_state_dir: Path, monkeypatch
+    ):
+        """Ensure inject_error truncates messages over 500 chars."""
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "1")
+
+        from core.debug_logger import get_logger, reset_logger
+        reset_logger()
+
+        logger = get_logger()
+        long_message = "X" * 1000  # 1000 chars
+        logger.inject_error("truncation_test", long_message)
+
+        log_file = temp_state_dir / "debug.log"
+        logs = log_file.read_text()
+
+        # The message should be truncated to 500 chars
+        assert logs.count("X") == 500
+
+
 # Helper for creating mock subprocess results (used in TestScoreRelevance)
 def make_mock_result(stdout: str = "", returncode: int = 0, stderr: str = ""):
     """Create a mock subprocess result for testing."""

@@ -509,25 +509,16 @@ class LessonsMixin:
         """
         all_lessons = self.list_lessons(scope="all")
 
-        if not all_lessons:
-            return InjectionResult(
-                top_lessons=[],
-                all_lessons=[],
-                total_count=0,
-                system_count=0,
-                project_count=0,
-            )
-
-        # Sort by uses (descending)
-        all_lessons.sort(key=lambda l: l.uses, reverse=True)
+        # Sort by uses (descending) if we have lessons
+        if all_lessons:
+            all_lessons.sort(key=lambda l: l.uses, reverse=True)
 
         top_lessons = all_lessons[:top_n]
-
         system_count = len([l for l in all_lessons if l.level == "system"])
         project_count = len([l for l in all_lessons if l.level == "project"])
-
-        # Log session start
         total_tokens = sum(l.tokens for l in all_lessons)
+
+        # Log session start BEFORE any early returns (for observability)
         logger = get_logger()
         logger.session_start(
             project_root=str(self.project_root),

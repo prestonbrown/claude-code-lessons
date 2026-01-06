@@ -130,7 +130,28 @@ generate_context() {
 
     # Try Python manager first
     if [[ -f "$PYTHON_MANAGER" ]]; then
-        summary=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" python3 "$PYTHON_MANAGER" inject "$top_n" 2>/dev/null || true)
+        local stderr_file
+        stderr_file=$(mktemp 2>/dev/null || echo "/tmp/inject-hook-$$")
+
+        summary=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
+            CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
+            CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" \
+            python3 "$PYTHON_MANAGER" inject "$top_n" 2>"$stderr_file")
+
+        local exit_code=$?
+        if [[ $exit_code -ne 0 ]]; then
+            # Log error if debug enabled
+            if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 1 ]] && [[ -f "$PYTHON_MANAGER" ]]; then
+                local error_msg
+                error_msg=$(cat "$stderr_file" 2>/dev/null | head -c 500)
+                PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
+                    CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
+                    python3 "$PYTHON_MANAGER" debug log-error \
+                    "inject_hook_failed" "exit=$exit_code: $error_msg" 2>/dev/null &
+            fi
+            summary=""  # Clear on failure
+        fi
+        rm -f "$stderr_file" 2>/dev/null
     fi
 
     # Fall back to bash manager if Python fails or returns empty
@@ -253,7 +274,7 @@ LESSON DUTY: When user corrects you, something fails, or you discover a pattern:
   ASK: \"Should I record this as a lesson? [category]: title - content\"
   CITE: When applying a lesson, say \"Applying [L###]: ...\"
   BEFORE git/implementing: Check if high-star lessons apply
-  AFTER mistakes: Cite the violated lesson, propose new if novel"
+  AFTER mistakes: Cite the violated lesson, propose new if novel
 
 HANDOFF DUTY: For MAJOR work (3+ files, multi-step, integration), you MUST:
   1. Use TodoWrite to track progress - todos auto-sync to handoffs

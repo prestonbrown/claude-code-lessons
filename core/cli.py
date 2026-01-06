@@ -264,6 +264,11 @@ def main():
     hook_end_parser.add_argument("total_ms", type=float, help="Total duration in ms")
     hook_end_parser.add_argument("--phases", help="JSON object of phase->ms timings")
 
+    # debug log-error <event> <message>
+    error_parser = debug_subparsers.add_parser("log-error", help="Log an error event")
+    error_parser.add_argument("event", help="Error event name")
+    error_parser.add_argument("message", help="Error message")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -649,6 +654,9 @@ def main():
                     if phases:
                         event["phases"] = {k: round(v, 2) for k, v in phases.items()}
                     logger._write(event)
+            elif args.debug_command == "log-error":
+                # Log an error event for debugging hook failures
+                logger.inject_error(args.event, args.message)
             else:
                 print("Unknown debug command", file=sys.stderr)
                 sys.exit(1)

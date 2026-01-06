@@ -511,6 +511,19 @@ class DebugLogger:
             }
         )
 
+    def inject_error(self, event_name: str, message: str) -> None:
+        """Log an injection error for debugging hook failures."""
+        if self._level < 1:
+            return
+        self._write(
+            {
+                "event": "inject_error",
+                "level": "error",
+                "error_event": event_name,
+                "message": message[:500],  # Truncate long error messages
+            }
+        )
+
     # =========================================================================
     # Level 3: Trace events
     # =========================================================================
