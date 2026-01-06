@@ -28,7 +28,40 @@ TabbedContent {
     height: 100%;
 }
 
+/* Content area needs to fill remaining space after tabs */
+ContentSwitcher {
+    height: 1fr;
+}
+
+/* Tab bar - fix height to prevent expansion */
+ContentTabs {
+    height: 2;
+}
+
+/* Fix internal container that uses 1fr by default */
+ContentTabs #tabs-scroll {
+    height: 1;
+}
+
+Tabs {
+    width: 100%;
+    height: auto;
+}
+
+/* Individual tab headers - add spacing between tabs
+   Using TabbedContent > Tabs Tab for higher specificity to override defaults */
+TabbedContent > Tabs Tab {
+    padding: 0 3;
+    margin: 0 1;
+}
+
+/* Active tab styling */
+TabbedContent > Tabs Tab.-active {
+    text-style: bold;
+}
+
 TabPane {
+    height: 1fr;
     padding: 0 1;
 }
 

@@ -277,12 +277,32 @@ class RecallMonitorApp(App):
 
     def on_mount(self) -> None:
         """Initialize on app mount."""
-        # Load initial data
-        self._load_events()
-        self._update_health()
-        self._update_state()
-        self._setup_session_list()
-        self._update_charts()
+        # Load initial data with error handling
+        try:
+            self._load_events()
+        except Exception as e:
+            self.notify(f"Error loading events: {e}", severity="error")
+
+        try:
+            self._update_health()
+        except Exception as e:
+            self.notify(f"Error updating health: {e}", severity="error")
+
+        try:
+            self._update_state()
+        except Exception as e:
+            self.notify(f"Error updating state: {e}", severity="error")
+
+        try:
+            self._setup_session_list()
+        except Exception as e:
+            self.notify(f"Error setting up sessions: {e}", severity="error")
+
+        try:
+            self._update_charts()
+        except Exception as e:
+            self.notify(f"Error updating charts: {e}", severity="error")
+
         self._update_subtitle()
 
         # Start auto-refresh timer (2 seconds)
