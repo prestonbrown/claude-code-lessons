@@ -650,10 +650,11 @@ summary: Previous session worked on integration tests.""")
             project_root=str(project_root)
         )
 
-        # Todos with implementing keywords
+        # Todos with implementing keywords (3+ required for auto-create)
         todos = [
             {"content": "Implement the new feature", "status": "in_progress", "activeForm": "Implementing"},
             {"content": "Add unit tests", "status": "pending", "activeForm": "Adding tests"},
+            {"content": "Update documentation", "status": "pending", "activeForm": "Updating docs"},
         ]
 
         handoff_id = manager.handoff_sync_todos(todos)
@@ -673,10 +674,11 @@ summary: Previous session worked on integration tests.""")
             project_root=str(project_root)
         )
 
-        # Todos with research keywords
+        # Todos with research keywords (3+ required for auto-create)
         todos = [
             {"content": "Research existing patterns", "status": "in_progress", "activeForm": "Researching"},
             {"content": "Investigate the codebase", "status": "pending", "activeForm": "Investigating"},
+            {"content": "Explore similar solutions", "status": "pending", "activeForm": "Exploring"},
         ]
 
         handoff_id = manager.handoff_sync_todos(todos)

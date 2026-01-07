@@ -2262,10 +2262,11 @@ class TestHandoffSyncTodos:
     """Tests for TodoWrite to Handoff sync functionality."""
 
     def test_sync_creates_approach_if_none_active(self, manager: LessonsManager) -> None:
-        """sync_todos creates new approach from first todo if no active approaches."""
+        """sync_todos creates new approach from first todo if 3+ todos and no active approaches."""
         todos = [
             {"content": "Research patterns", "status": "completed", "activeForm": "Researching"},
             {"content": "Implement fix", "status": "in_progress", "activeForm": "Implementing"},
+            {"content": "Write tests", "status": "pending", "activeForm": "Writing tests"},
         ]
 
         result = manager.handoff_sync_todos(todos)
@@ -2274,6 +2275,18 @@ class TestHandoffSyncTodos:
         handoff = manager.handoff_get(result)
         assert handoff is not None
         assert "Research patterns" in handoff.title
+
+    def test_sync_skips_if_fewer_than_3_todos_and_no_active(self, manager: LessonsManager) -> None:
+        """sync_todos returns None if < 3 todos and no active handoff (avoids noise)."""
+        todos = [
+            {"content": "Quick fix", "status": "completed", "activeForm": "Fixing"},
+            {"content": "Test it", "status": "pending", "activeForm": "Testing"},
+        ]
+
+        result = manager.handoff_sync_todos(todos)
+
+        assert result is None
+        assert len(manager.handoff_list()) == 0
 
     def test_sync_updates_existing_approach(self, manager: LessonsManager) -> None:
         """sync_todos updates most recently updated active handoff."""

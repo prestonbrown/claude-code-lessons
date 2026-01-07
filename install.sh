@@ -282,6 +282,8 @@ install_claude() {
     cp "$SCRIPT_DIR/adapters/claude-code/stop-hook.sh" "$hooks_dir/"
     cp "$SCRIPT_DIR/adapters/claude-code/precompact-hook.sh" "$hooks_dir/"
     cp "$SCRIPT_DIR/adapters/claude-code/session-end-hook.sh" "$hooks_dir/"
+    cp "$SCRIPT_DIR/adapters/claude-code/post-exitplanmode-hook.sh" "$hooks_dir/"
+    cp "$SCRIPT_DIR/adapters/claude-code/post-todowrite-hook.sh" "$hooks_dir/"
     chmod +x "$hooks_dir"/*.sh
 
     # Create /lessons command
@@ -330,7 +332,11 @@ EOF
       {"type": "command", "command": "bash '"$hooks_dir"'/stop-hook.sh", "timeout": 5000},
       {"type": "command", "command": "bash '"$hooks_dir"'/session-end-hook.sh", "timeout": 30000}
     ]}],
-    "PreCompact": [{"hooks": [{"type": "command", "command": "bash '"$hooks_dir"'/precompact-hook.sh", "timeout": 45000}]}]
+    "PreCompact": [{"hooks": [{"type": "command", "command": "bash '"$hooks_dir"'/precompact-hook.sh", "timeout": 45000}]}],
+    "PostToolUse": [
+      {"matcher": "ExitPlanMode", "hooks": [{"type": "command", "command": "bash '"$hooks_dir"'/post-exitplanmode-hook.sh", "timeout": 5000}]},
+      {"matcher": "TodoWrite", "hooks": [{"type": "command", "command": "bash '"$hooks_dir"'/post-todowrite-hook.sh", "timeout": 5000}]}
+    ]
   }
 }'
     
@@ -419,6 +425,8 @@ uninstall() {
     rm -f "$HOME/.claude/hooks/stop-hook.sh"
     rm -f "$HOME/.claude/hooks/precompact-hook.sh"
     rm -f "$HOME/.claude/hooks/session-end-hook.sh"
+    rm -f "$HOME/.claude/hooks/post-exitplanmode-hook.sh"
+    rm -f "$HOME/.claude/hooks/post-todowrite-hook.sh"
     rm -f "$HOME/.claude/commands/lessons.md"
 
     # Selectively remove only Claude Recall hooks from settings.json
@@ -452,6 +460,11 @@ uninstall() {
                 .PreCompact |= map(
                   .hooks |= map(select(.command | contains("precompact-hook.sh") | not))
                 ) | .PreCompact |= map(select(.hooks | length > 0))
+              else . end |
+              if .PostToolUse then
+                .PostToolUse |= map(
+                  select(.hooks[0].command | (contains("post-exitplanmode-hook.sh") or contains("post-todowrite-hook.sh")) | not)
+                )
               else . end |
               # Remove empty hook arrays
               with_entries(select(.value | length > 0))

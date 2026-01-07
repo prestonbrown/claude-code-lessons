@@ -1652,11 +1652,16 @@ Consider extracting lessons about:
         - in_progress todo → checkpoint (current focus)
         - pending todos → next_steps
 
+        If an active handoff exists, syncs to it regardless of todo count.
+        If no active handoff exists, only creates one if 3+ todos (avoids
+        noise for small tasks).
+
         Args:
             todos: List of todo dicts with 'content', 'status', 'activeForm'
 
         Returns:
-            Handoff ID that was updated/created, or None if no todos
+            Handoff ID that was updated/created, or None if no todos or
+            if < 3 todos and no active handoff
         """
         if not todos:
             return None
@@ -1673,8 +1678,8 @@ Consider extracting lessons about:
             # Use the most recently updated active handoff
             handoff = max(active_handoffs, key=lambda h: h.updated)
             handoff_id = handoff.id
-        else:
-            # Create new handoff from first todo
+        elif len(todos) >= 3:
+            # Only auto-create handoff if 3+ todos (avoid noise for small tasks)
             first_todo = todos[0].get("content", "Work in progress")
             # Truncate title to 50 chars
             title = first_todo[:50] + ("..." if len(first_todo) > 50 else "")
@@ -1694,6 +1699,9 @@ Consider extracting lessons about:
 
             handoff_id = self.handoff_add(title=title, phase=phase)
             # handoff_add already logs creation via debug_logger
+        else:
+            # Less than 3 todos and no active handoff - skip to avoid noise
+            return None
 
         # Sync completed todos as tried entries (success)
         # Only add new ones - check if description already exists
