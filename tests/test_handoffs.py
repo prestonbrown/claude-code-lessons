@@ -5914,5 +5914,130 @@ echo "$result"
         assert "hf-abc1234" in result.stdout
 
 
+class TestOrphanHandoffAutoCompletion:
+    """Tests for auto-completing orphan handoffs that were never closed out."""
+
+    def test_orphan_handoff_auto_completed(self, manager: LessonsManager) -> None:
+        """Handoffs in ready_for_review with all success steps are auto-completed after 1 day."""
+        from core.models import HANDOFF_ORPHAN_DAYS
+
+        handoff_id = manager.handoff_add(title="Orphan work")
+        manager.handoff_add_tried(handoff_id, "success", "Step 1")
+        manager.handoff_add_tried(handoff_id, "success", "Step 2")
+        manager.handoff_update_status(handoff_id, "ready_for_review")
+
+        # Backdate the handoff
+        handoffs = manager._parse_handoffs_file(manager.project_handoffs_file)
+        handoffs[0].updated = date.today() - timedelta(days=HANDOFF_ORPHAN_DAYS + 1)
+        manager._write_handoffs_file(handoffs)
+
+        # Trigger auto-completion via inject
+        manager.handoff_inject()
+
+        # Should now be completed
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "completed"
+        assert "Auto-completed" in (handoff.description or "")
+
+    def test_orphan_with_failed_step_not_completed(self, manager: LessonsManager) -> None:
+        """Handoffs with any non-success steps are not auto-completed."""
+        from core.models import HANDOFF_ORPHAN_DAYS
+
+        handoff_id = manager.handoff_add(title="Incomplete work")
+        manager.handoff_add_tried(handoff_id, "success", "Step 1")
+        manager.handoff_add_tried(handoff_id, "fail", "Step 2 failed")
+        manager.handoff_update_status(handoff_id, "ready_for_review")
+
+        # Backdate the handoff
+        handoffs = manager._parse_handoffs_file(manager.project_handoffs_file)
+        handoffs[0].updated = date.today() - timedelta(days=HANDOFF_ORPHAN_DAYS + 1)
+        manager._write_handoffs_file(handoffs)
+
+        # Trigger auto-completion via inject
+        manager.handoff_inject()
+
+        # Should NOT be completed (has failed step)
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "ready_for_review"
+
+    def test_orphan_in_progress_not_completed(self, manager: LessonsManager) -> None:
+        """Handoffs in in_progress status are not auto-completed."""
+        from core.models import HANDOFF_ORPHAN_DAYS
+
+        handoff_id = manager.handoff_add(title="In progress work")
+        manager.handoff_add_tried(handoff_id, "success", "Step 1")
+        manager.handoff_update_status(handoff_id, "in_progress")
+
+        # Backdate the handoff
+        handoffs = manager._parse_handoffs_file(manager.project_handoffs_file)
+        handoffs[0].updated = date.today() - timedelta(days=HANDOFF_ORPHAN_DAYS + 1)
+        manager._write_handoffs_file(handoffs)
+
+        # Trigger auto-completion via inject
+        manager.handoff_inject()
+
+        # Should NOT be completed (wrong status - only ready_for_review is auto-completed)
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "in_progress"
+
+    def test_orphan_no_tried_steps_not_completed(self, manager: LessonsManager) -> None:
+        """Handoffs with no tried steps are not auto-completed."""
+        from core.models import HANDOFF_ORPHAN_DAYS
+
+        handoff_id = manager.handoff_add(title="Empty work")
+        manager.handoff_update_status(handoff_id, "ready_for_review")
+
+        # Backdate the handoff
+        handoffs = manager._parse_handoffs_file(manager.project_handoffs_file)
+        handoffs[0].updated = date.today() - timedelta(days=HANDOFF_ORPHAN_DAYS + 1)
+        manager._write_handoffs_file(handoffs)
+
+        # Trigger auto-completion via inject
+        manager.handoff_inject()
+
+        # Should NOT be completed (no tried steps)
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "ready_for_review"
+
+    def test_recent_orphan_not_completed(self, manager: LessonsManager) -> None:
+        """Fresh handoffs in ready_for_review are not auto-completed."""
+        handoff_id = manager.handoff_add(title="Fresh work")
+        manager.handoff_add_tried(handoff_id, "success", "Step 1")
+        manager.handoff_update_status(handoff_id, "ready_for_review")
+
+        # Don't backdate - keep it fresh (today)
+
+        # Trigger auto-completion via inject
+        manager.handoff_inject()
+
+        # Should NOT be completed (too fresh)
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "ready_for_review"
+
+    def test_auto_complete_returns_ids(self, manager: LessonsManager) -> None:
+        """_auto_complete_orphan_handoffs returns list of completed handoff IDs."""
+        from core.models import HANDOFF_ORPHAN_DAYS
+
+        h1 = manager.handoff_add(title="Orphan 1")
+        h2 = manager.handoff_add(title="Orphan 2")
+        manager.handoff_add_tried(h1, "success", "Done")
+        manager.handoff_add_tried(h2, "success", "Done")
+        manager.handoff_update_status(h1, "ready_for_review")
+        manager.handoff_update_status(h2, "ready_for_review")
+
+        # Backdate both
+        handoffs = manager._parse_handoffs_file(manager.project_handoffs_file)
+        for h in handoffs:
+            h.updated = date.today() - timedelta(days=HANDOFF_ORPHAN_DAYS + 1)
+        manager._write_handoffs_file(handoffs)
+
+        # Call the internal method directly
+        completed = manager._auto_complete_orphan_handoffs()
+
+        assert len(completed) == 2
+        assert h1 in completed
+        assert h2 in completed
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

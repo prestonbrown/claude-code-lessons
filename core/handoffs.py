@@ -24,6 +24,7 @@ try:
         HANDOFF_MAX_AGE_DAYS,
         HANDOFF_STALE_DAYS,
         HANDOFF_COMPLETED_ARCHIVE_DAYS,
+        HANDOFF_ORPHAN_DAYS,
         # Dataclasses
         TriedStep,
         Handoff,
@@ -52,6 +53,7 @@ except ImportError:
         HANDOFF_MAX_AGE_DAYS,
         HANDOFF_STALE_DAYS,
         HANDOFF_COMPLETED_ARCHIVE_DAYS,
+        HANDOFF_ORPHAN_DAYS,
         # Dataclasses
         TriedStep,
         Handoff,
@@ -1338,6 +1340,61 @@ Consider extracting lessons about:
             else:
                 self._write_handoffs_file(handoffs)
 
+    def _auto_complete_orphan_handoffs(self) -> List[str]:
+        """
+        Auto-complete orphan handoffs that appear done but weren't closed out.
+
+        Criteria for auto-completion:
+        - Status is 'ready_for_review'
+        - Has at least one tried step
+        - All tried steps have 'success' outcome
+        - Updated more than HANDOFF_ORPHAN_DAYS ago
+
+        Returns:
+            List of auto-completed handoff IDs
+        """
+        cutoff = date.today() - timedelta(days=HANDOFF_ORPHAN_DAYS)
+        completed_ids = []
+
+        with FileLock(self.project_handoffs_file):
+            if not self.project_handoffs_file.exists():
+                return []
+
+            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+            modified = False
+
+            for handoff in handoffs:
+                # Check all orphan criteria
+                if (
+                    handoff.status == "ready_for_review"
+                    and handoff.tried  # Has at least one tried step
+                    and all(step.outcome == "success" for step in handoff.tried)
+                    and handoff.updated < cutoff
+                ):
+                    # Mark as completed
+                    handoff.status = "completed"
+                    handoff.updated = date.today()
+                    # Add note to description
+                    orphan_note = "[Auto-completed: orphan handoff with all success steps]"
+                    if handoff.description:
+                        handoff.description = f"{orphan_note} {handoff.description}"
+                    else:
+                        handoff.description = orphan_note
+                    completed_ids.append(handoff.id)
+                    modified = True
+                    logger = get_logger()
+                    logger.handoff_change(
+                        handoff_id=handoff.id,
+                        action="auto_completed",
+                        old_value="ready_for_review",
+                        new_value="completed",
+                    )
+
+            if modified:
+                self._write_handoffs_file(handoffs)
+
+        return completed_ids
+
     def _archive_stale_handoffs(self) -> List[str]:
         """
         Auto-archive active handoffs that haven't been updated in HANDOFF_STALE_DAYS.
@@ -1555,7 +1612,8 @@ Consider extracting lessons about:
         Returns:
             Formatted string for context injection, empty if no handoffs
         """
-        # Auto-archive stale and old completed handoffs before listing
+        # Auto-maintenance before listing
+        self._auto_complete_orphan_handoffs()
         self._archive_stale_handoffs()
         self._archive_old_completed_handoffs()
 

@@ -37,10 +37,10 @@ fi
 
 is_enabled() {
     local config="$HOME/.claude/settings.json"
-    [[ -f "$config" ]] && {
-        local enabled=$(jq -r '.claudeRecall.enabled // true' "$config" 2>/dev/null || echo "true")
-        [[ "$enabled" != "false" ]]
-    }
+    [[ -f "$config" ]] || return 0  # Enabled by default if no config
+    # Note: jq // operator treats false as falsy, so we check explicitly
+    local enabled=$(jq -r '.claudeRecall.enabled' "$config" 2>/dev/null)
+    [[ "$enabled" != "false" ]]  # Enabled unless explicitly false
 }
 
 log_debug() {

@@ -50,10 +50,10 @@ RELEVANCE_TIMEOUT=$SCORE_RELEVANCE_TIMEOUT
 
 is_enabled() {
     local config="$HOME/.claude/settings.json"
-    [[ -f "$config" ]] && {
-        local enabled=$(jq -r '.claudeRecall.enabled // true' "$config" 2>/dev/null || echo "true")
-        [[ "$enabled" == "true" ]]
-    } || return 0
+    [[ -f "$config" ]] || return 0  # Enabled by default if no config
+    # Note: jq // operator treats false as falsy, so we check explicitly
+    local enabled=$(jq -r '.claudeRecall.enabled' "$config" 2>/dev/null)
+    [[ "$enabled" != "false" ]]  # Enabled unless explicitly false
 }
 
 # Check if this is the first prompt in the session

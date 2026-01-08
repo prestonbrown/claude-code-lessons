@@ -31,6 +31,7 @@ HANDOFF_MAX_COMPLETED = 3  # Keep last N completed handoffs visible
 HANDOFF_MAX_AGE_DAYS = 7  # Or completed within N days
 HANDOFF_STALE_DAYS = 7  # Auto-archive active handoffs untouched for N days
 HANDOFF_COMPLETED_ARCHIVE_DAYS = 3  # Archive completed handoffs after N days
+HANDOFF_ORPHAN_DAYS = 1  # Auto-complete ready_for_review handoffs with all success after N days
 
 # DEPRECATED (remove after 2025-06-01): Use HANDOFF_* constants instead
 APPROACH_MAX_COMPLETED = HANDOFF_MAX_COMPLETED

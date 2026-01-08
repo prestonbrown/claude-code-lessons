@@ -714,6 +714,15 @@ class RecallMonitorApp(App):
         """Update state overview display."""
         state_widget = self.query_one("#state-overview", Static)
 
+        # Get available width for truncation (fallback to 80 if not yet sized)
+        available_width = state_widget.size.width if state_widget.size.width > 0 else 80
+
+        def truncate(text: str, max_len: int) -> str:
+            """Truncate text with ellipsis if too long."""
+            if len(text) <= max_len:
+                return text
+            return text[:max_len - 3] + "..." if max_len > 3 else text[:max_len]
+
         lines = []
 
         # Lesson counts
@@ -732,7 +741,9 @@ class RecallMonitorApp(App):
                 lines.append("[bold]Top Lessons (by uses)[/bold]")
                 for lesson in top_lessons:
                     level_tag = "S" if lesson.is_system else "L"
-                    lines.append(f"  [{lesson.id}] {lesson.title[:40]} ({lesson.uses} uses, vel={lesson.velocity:.1f})")
+                    # "  [L001] " = 9 chars prefix, " (X uses, vel=Y.Z)" = ~25 chars suffix
+                    title_width = max(15, available_width - 34)
+                    lines.append(f"  [{lesson.id}] {truncate(lesson.title, title_width)} ({lesson.uses} uses, vel={lesson.velocity:.1f})")
                 lines.append("")
 
         except Exception as e:
@@ -753,7 +764,9 @@ class RecallMonitorApp(App):
                 lines.append("[bold]Active Handoffs[/bold]")
                 for h in active_handoffs:
                     status_color = "red" if h.is_blocked else "yellow" if h.status == "ready_for_review" else "green"
-                    lines.append(f"  [{h.id}] {h.title[:35]}")
+                    # "  [hf-xxxxxxx] " = 15 chars prefix
+                    title_width = max(20, available_width - 15)
+                    lines.append(f"  [{h.id}] {truncate(h.title, title_width)}")
                     lines.append(f"    [{status_color}]{h.status}[/{status_color}] | {h.phase}")
                 lines.append("")
 

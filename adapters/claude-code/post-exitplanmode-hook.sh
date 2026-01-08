@@ -37,10 +37,10 @@ fi
 
 is_enabled() {
     local config="$HOME/.claude/settings.json"
-    [[ -f "$config" ]] && {
-        local enabled=$(jq -r '.claudeRecall.enabled // true' "$config" 2>/dev/null || echo "true")
-        [[ "$enabled" != "false" ]]
-    }
+    [[ -f "$config" ]] || return 0  # Enabled by default if no config
+    # Note: jq // operator treats false as falsy, so we check explicitly
+    local enabled=$(jq -r '.claudeRecall.enabled' "$config" 2>/dev/null)
+    [[ "$enabled" != "false" ]]  # Enabled unless explicitly false
 }
 
 find_project_root() {
@@ -101,11 +101,32 @@ fi
 
 log_debug "post-exitplanmode: creating handoff from plan '$title'"
 
-# Create handoff with phase=implementing
+# Create handoff with phase=implementing and capture output
 if [[ -f "$PYTHON_MANAGER" ]]; then
-    PROJECT_DIR="$project_root" python3 "$PYTHON_MANAGER" approach add "$title" --phase implementing 2>/dev/null || {
+    output=$(PROJECT_DIR="$project_root" python3 "$PYTHON_MANAGER" handoff add "$title" --phase implementing 2>&1) || {
         log_debug "post-exitplanmode: failed to create handoff"
+        exit 0
     }
+
+    # Parse handoff ID from output (format: "Added handoff hf-xxxxxxx: Title")
+    handoff_id=$(echo "$output" | grep -oE 'hf-[0-9a-f]{7}' | head -1)
+
+    if [[ -n "$handoff_id" ]]; then
+        # Output explicit, actionable message for the agent
+        cat <<EOF
+
+════════════════════════════════════════════════════════════════
+HANDOFF CREATED: $handoff_id
+Title: $title
+
+For continuation in a new session, include:
+  "Continue handoff $handoff_id: $title"
+
+The next session will auto-inject this handoff's context.
+════════════════════════════════════════════════════════════════
+
+EOF
+    fi
 fi
 
 exit 0
