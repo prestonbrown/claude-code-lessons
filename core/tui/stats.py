@@ -210,7 +210,11 @@ class StatsAggregator:
             session_id: Session ID to analyze
 
         Returns:
-            Dict with session-specific metrics
+            Dict with session-specific metrics including:
+            - session_id, event_count, errors, citations, duration_ms, project
+            - first_event_time: datetime or None
+            - last_event_time: datetime or None
+            - tokens: int from session_start event's total_tokens
         """
         events = self.log_reader.filter_by_session(session_id)
 
@@ -221,17 +225,34 @@ class StatsAggregator:
                 "errors": 0,
                 "citations": 0,
                 "duration_ms": 0,
+                "project": "",
+                "first_event_time": None,
+                "last_event_time": None,
+                "tokens": 0,
             }
 
         citations = sum(1 for e in events if e.event == EventType.CITATION)
         errors = sum(1 for e in events if e.is_error)
 
-        # Calculate duration from first to last event
+        # Calculate timestamps from events
         timestamps = [e.timestamp_dt for e in events if e.timestamp_dt]
+        first_event_time = min(timestamps) if timestamps else None
+        last_event_time = max(timestamps) if timestamps else None
+
+        # Calculate duration from first to last event
         if len(timestamps) >= 2:
-            duration = (max(timestamps) - min(timestamps)).total_seconds() * 1000
+            duration = (last_event_time - first_event_time).total_seconds() * 1000
         else:
             duration = 0
+
+        # Extract tokens from session_start event
+        tokens = 0
+        has_session_start = False
+        for e in events:
+            if e.event == EventType.SESSION_START:
+                has_session_start = True
+                tokens = e.get("total_tokens", 0)
+                break
 
         return {
             "session_id": session_id,
@@ -240,6 +261,10 @@ class StatsAggregator:
             "citations": citations,
             "duration_ms": round(duration, 2),
             "project": events[0].project if events else "",
+            "first_event_time": first_event_time,
+            "last_event_time": last_event_time,
+            "tokens": tokens,
+            "has_session_start": has_session_start,
         }
 
     def compute_project_stats(self, project: str) -> Dict[str, Any]:

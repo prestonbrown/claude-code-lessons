@@ -650,7 +650,7 @@ def main():
                         pass
                 # hook_end expects start_time, but from bash we just log directly
                 # So we use a simple event write instead
-                if logger.level >= 2:
+                if logger.level >= 1:
                     event = {
                         "event": "hook_end",
                         "level": "debug",
