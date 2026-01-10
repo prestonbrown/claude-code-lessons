@@ -740,15 +740,57 @@ summary: Previous session worked on integration tests.""")
         # Bad: "HANDOFF COMPLETE hf-xxx hf-yyy"
         # Good: "HANDOFF COMPLETE hf-xxx\n      HANDOFF COMPLETE hf-yyy"
         import re
-        # Find all HANDOFF COMPLETE commands
-        complete_lines = re.findall(r'HANDOFF COMPLETE\s+\S+', hook_output)
+        # Find all HANDOFF COMPLETE commands with actual handoff IDs (hf-xxxxxxx format)
+        # Excludes instruction placeholders like <id>
+        complete_lines = re.findall(r'HANDOFF COMPLETE\s+(hf-[0-9a-f]+)', hook_output)
 
-        # There should be exactly 2 separate HANDOFF COMPLETE commands
-        assert len(complete_lines) == 2, \
-            f"Expected 2 separate HANDOFF COMPLETE lines, got {len(complete_lines)}. Output:\n{hook_output}"
+        # There should be exactly 2 separate HANDOFF COMPLETE commands with the correct IDs
+        assert set(complete_lines) == {hf1, hf2}, \
+            f"Expected IDs {hf1} and {hf2}, got {complete_lines}. Output:\n{hook_output}"
 
-        # Each should only have ONE ID
-        for line in complete_lines:
-            parts = line.split()
-            assert len(parts) == 3, \
-                f"Expected 'HANDOFF COMPLETE <one-id>', got: {line}"
+    def test_inject_includes_completion_workflow_instructions(self, integration_env, hook_env):
+        """Inject hook should include instructions for review → complete → commit workflow."""
+        # Create a lesson so inject has something to output
+        lessons_dir = integration_env["project_root"] / ".claude-recall"
+        lessons_dir.mkdir(exist_ok=True)
+        lessons_file = lessons_dir / "LESSONS.md"
+        lessons_file.write_text("""# LESSONS.md - Project Level
+
+## Active Lessons
+
+### [L001] [*----|-----] Test lesson
+- **Uses**: 1 | **Velocity**: 1.0 | **Learned**: 2026-01-01 | **Last**: 2026-01-03 | **Category**: pattern
+> This is a test lesson.
+""")
+
+        hook = integration_env["hooks_dir"] / "inject-hook.sh"
+        result = run_hook(hook, {"cwd": str(integration_env["project_root"])}, hook_env)
+
+        assert result.returncode == 0
+
+        # Parse the JSON output
+        output_lines = result.stdout.strip().split('\n')
+        json_output = None
+        for line in output_lines:
+            if line.startswith('{'):
+                try:
+                    json_output = json.loads(line)
+                    break
+                except json.JSONDecodeError:
+                    continue
+
+        assert json_output is not None, f"Expected JSON output, got: {result.stdout}"
+
+        hook_specific = json_output.get("hookSpecificOutput", {})
+        if isinstance(hook_specific, dict):
+            hook_output = hook_specific.get("additionalContext", "")
+        else:
+            hook_output = str(hook_specific)
+
+        # HANDOFF DUTY should include completion workflow
+        assert "/review" in hook_output, \
+            f"HANDOFF DUTY should mention /review for code review. Output:\n{hook_output}"
+        assert "HANDOFF COMPLETE" in hook_output, \
+            f"HANDOFF DUTY should mention HANDOFF COMPLETE. Output:\n{hook_output}"
+        assert "commit" in hook_output.lower(), \
+            f"HANDOFF DUTY should mention commit after completion. Output:\n{hook_output}"
