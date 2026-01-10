@@ -367,6 +367,31 @@ class TestCitation:
             lesson = manager2.get_lesson(lesson_id)
             assert lesson.uses == 2, f"{lesson_id} should have 2 uses (1 initial + 1 cite)"
 
+    def test_cli_cite_batch_with_invalid_id(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path):
+        """CLI cite should continue processing valid IDs when one is invalid."""
+        from core import LessonsManager
+
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson("project", "pattern", "First", "Content 1")
+        manager.add_lesson("project", "pattern", "Second", "Content 2")
+
+        result = subprocess.run(
+            ["python3", "core/cli.py", "cite", "L001", "L999", "L002"],  # L999 doesn't exist
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_STATE": str(temp_state_dir),
+                "PROJECT_DIR": str(temp_project_root),
+            },
+        )
+
+        # Valid citations should succeed (2 out of 3)
+        assert result.stdout.count("OK:") == 2, f"Expected 2 OK outputs, got: {result.stdout}"
+        # Error should be reported for invalid ID
+        assert "Error:L999" in result.stderr, f"Expected error for L999, got: {result.stderr}"
+
 
 # =============================================================================
 # Injection (Context Generation)
