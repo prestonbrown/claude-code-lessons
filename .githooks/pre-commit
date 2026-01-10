@@ -1,0 +1,12 @@
+#!/bin/bash
+# Pre-commit hook: runs fast test suite (unit tests only, parallel)
+# Install: git config core.hooksPath .githooks
+
+set -e
+
+echo "Running fast test suite..."
+
+# Use run-tests.sh which handles venv and dependencies
+./run-tests.sh fast
+
+echo "All tests passed!"
