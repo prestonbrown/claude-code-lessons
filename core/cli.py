@@ -98,9 +98,9 @@ def main():
         "--force", action="store_true", help="Skip duplicate check"
     )
 
-    # cite command
-    cite_parser = subparsers.add_parser("cite", help="Cite a lesson")
-    cite_parser.add_argument("lesson_id", help="Lesson ID (e.g., L001)")
+    # cite command (accepts multiple IDs for batch processing)
+    cite_parser = subparsers.add_parser("cite", help="Cite one or more lessons")
+    cite_parser.add_argument("lesson_ids", nargs="+", help="Lesson ID(s) (e.g., L001 L002 L003)")
 
     # inject command
     inject_parser = subparsers.add_parser("inject", help="Output top lessons for injection")
@@ -385,11 +385,15 @@ def main():
             print(f"Added system lesson {lesson_id}: {args.title}")
 
         elif args.command == "cite":
-            result = manager.cite_lesson(args.lesson_id)
-            if result.promotion_ready:
-                print(f"PROMOTION_READY:{result.lesson_id}:{result.uses}")
-            else:
-                print(f"OK:{result.uses}")
+            for lesson_id in args.lesson_ids:
+                try:
+                    result = manager.cite_lesson(lesson_id)
+                    if result.promotion_ready:
+                        print(f"PROMOTION_READY:{result.lesson_id}:{result.uses}")
+                    else:
+                        print(f"OK:{result.uses}")
+                except ValueError as e:
+                    print(f"Error:{lesson_id}:{e}", file=sys.stderr)
 
         elif args.command == "inject":
             result = manager.inject_context(args.top_n)

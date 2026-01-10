@@ -731,28 +731,26 @@ main() {
         exit 0
     }
 
-    # Cite each lesson (Python first, bash fallback)
+    # Cite all lessons in a single batch call (much faster than per-lesson)
     phase_start=$(get_ms)
     local cited_count=0
-    while IFS= read -r citation; do
-        [[ -z "$citation" ]] && continue
-        local lesson_id=$(echo "$citation" | tr -d '[]')
-        local result=""
 
-        # Try Python manager first
-        if [[ -f "$PYTHON_MANAGER" ]]; then
-            result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" python3 "$PYTHON_MANAGER" cite "$lesson_id" 2>&1 || true)
-        fi
+    # Convert citations to space-separated IDs: [L001]\n[L002] -> L001 L002
+    local lesson_ids=$(echo "$citations" | tr -d '[]' | tr '\n' ' ' | xargs)
 
-        # Fall back to bash manager if Python fails
-        if [[ -z "$result" && -x "$BASH_MANAGER" ]]; then
-            result=$(PROJECT_DIR="$project_root" LESSONS_DEBUG="${LESSONS_DEBUG:-}" "$BASH_MANAGER" cite "$lesson_id" 2>&1 || true)
-        fi
-
-        if [[ "$result" == OK:* ]]; then
-            ((cited_count++)) || true
-        fi
-    done <<< "$citations"
+    if [[ -n "$lesson_ids" && -f "$PYTHON_MANAGER" ]]; then
+        # Single Python call with all IDs
+        local result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
+            python3 "$PYTHON_MANAGER" cite $lesson_ids 2>&1 || true)
+        # Count successful citations (each outputs OK: on its own line)
+        cited_count=$(echo "$result" | grep -c "^OK:" || true)
+    elif [[ -n "$lesson_ids" && -x "$BASH_MANAGER" ]]; then
+        # Fall back to bash manager (still loops internally but less common)
+        for lesson_id in $lesson_ids; do
+            local result=$(PROJECT_DIR="$project_root" LESSONS_DEBUG="${LESSONS_DEBUG:-}" "$BASH_MANAGER" cite "$lesson_id" 2>&1 || true)
+            [[ "$result" == OK:* ]] && ((cited_count++)) || true
+        done
+    fi
     log_phase "cite_lessons" "$phase_start"
 
     # Update checkpoint

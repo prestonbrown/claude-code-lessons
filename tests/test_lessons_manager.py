@@ -333,6 +333,40 @@ class TestCitation:
         lesson = manager.get_lesson("L001")
         assert lesson.uses == 100
 
+    def test_cli_cite_multiple_lessons(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path):
+        """CLI cite command should accept multiple lesson IDs and cite all of them."""
+        from core import LessonsManager
+
+        # Create some lessons first
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson("project", "pattern", "First", "Content 1")
+        manager.add_lesson("project", "pattern", "Second", "Content 2")
+        manager.add_lesson("project", "pattern", "Third", "Content 3")
+
+        # Cite multiple lessons in one CLI call
+        result = subprocess.run(
+            ["python3", "core/cli.py", "cite", "L001", "L002", "L003"],
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_STATE": str(temp_state_dir),
+                "PROJECT_DIR": str(temp_project_root),
+            },
+        )
+
+        assert result.returncode == 0, f"CLI failed: {result.stderr}"
+
+        # Should have output for all three citations
+        assert result.stdout.count("OK:") == 3, f"Expected 3 OK outputs, got: {result.stdout}"
+
+        # Verify all lessons were cited
+        manager2 = LessonsManager(temp_lessons_base, temp_project_root)
+        for lesson_id in ["L001", "L002", "L003"]:
+            lesson = manager2.get_lesson(lesson_id)
+            assert lesson.uses == 2, f"{lesson_id} should have 2 uses (1 initial + 1 cite)"
+
 
 # =============================================================================
 # Injection (Context Generation)
