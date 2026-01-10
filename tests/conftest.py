@@ -7,6 +7,13 @@ import pytest
 from pathlib import Path
 
 
+def pytest_configure(config):
+    """Register custom markers."""
+    config.addinivalue_line("markers", "slow: marks tests as slow")
+    config.addinivalue_line("markers", "integration: marks integration tests")
+    config.addinivalue_line("markers", "tui: marks TUI tests")
+
+
 @pytest.fixture
 def temp_state_dir(tmp_path: Path, monkeypatch) -> Path:
     """Create and return a temporary state directory.

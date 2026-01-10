@@ -20,6 +20,9 @@ from typing import Dict, List, Optional
 
 import pytest
 
+# Mark all tests in this module as integration tests
+pytestmark = pytest.mark.integration
+
 
 # =============================================================================
 # Fixtures
