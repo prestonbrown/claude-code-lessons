@@ -34,11 +34,17 @@ def format_settings(data):
     output_lines = ["{"]
 
     # Non-hooks fields first
-    for key, value in data.items():
-        if key != "hooks":
-            formatted = json.dumps(value, indent=2).replace("\n", "\n  ")
-            output_lines.append(f'  "{key}": {formatted},')
-            output_lines.append("")
+    non_hooks_keys = [k for k in data.keys() if k != "hooks"]
+    has_hooks = "hooks" in data
+
+    for i, key in enumerate(non_hooks_keys):
+        value = data[key]
+        formatted = json.dumps(value, indent=2).replace("\n", "\n  ")
+        # Add comma if there are more non-hooks fields or if hooks section follows
+        is_last = (i == len(non_hooks_keys) - 1)
+        comma = "," if not is_last or has_hooks else ""
+        output_lines.append(f'  "{key}": {formatted}{comma}')
+        output_lines.append("")
 
     # Hooks section
     if "hooks" in data:
