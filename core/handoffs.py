@@ -1816,7 +1816,9 @@ Consider extracting lessons about:
                 handoff_id = handoff.id
 
         # Create new handoff if none found and enough todos
-        if not handoff_id and len(todos) >= 3:
+        # BUT: if todos explicitly reference a handoff (even completed), don't create
+        # a new one - the work is already tracked under that handoff
+        if not handoff_id and len(todos) >= 3 and not explicit_handoff_ids:
             # Only auto-create handoff if 3+ todos (avoid noise for small tasks)
             first_todo = todos[0].get("content", "Work in progress")
             # Truncate title to 50 chars

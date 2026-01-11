@@ -7060,3 +7060,41 @@ class TestParseTranscriptIntegration:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestSyncTodosCompletedHandoff:
+    """Tests for sync_todos behavior with completed handoffs."""
+
+    def test_sync_todos_does_not_create_handoff_for_completed_reference(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If todos reference a completed handoff, don't create a new one."""
+        lessons_base = tmp_path / "lessons_base"
+        project_root = tmp_path / "project"
+        lessons_base.mkdir()
+        project_root.mkdir()
+
+        monkeypatch.setenv("CLAUDE_RECALL_BASE", str(lessons_base))
+        monkeypatch.setenv("PROJECT_DIR", str(project_root))
+
+        manager = LessonsManager(lessons_base, project_root)
+
+        # Create and complete a handoff
+        handoff_id = manager.handoff_add(title="Original work")
+        manager.handoff_update_status(handoff_id, "completed")
+
+        # Now sync todos that reference the completed handoff
+        todos = [
+            {"content": f"[{handoff_id}] First task", "status": "completed", "activeForm": "First task"},
+            {"content": f"[{handoff_id}] Second task", "status": "completed", "activeForm": "Second task"},
+            {"content": f"[{handoff_id}] Third task", "status": "completed", "activeForm": "Third task"},
+        ]
+
+        result = manager.handoff_sync_todos(todos)
+
+        # Should NOT create a new handoff - the work is tracked under the completed one
+        assert result is None
+
+        # Verify no new active handoffs were created
+        active = manager.handoff_list(include_completed=False)
+        assert len(active) == 0
