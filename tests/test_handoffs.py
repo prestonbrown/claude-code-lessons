@@ -6565,5 +6565,498 @@ class TestHandoffBatchProcess:
         assert "LAST" in result["results"][0]["error"] or "No handoff" in result["results"][0]["error"]
 
 
+# =============================================================================
+# Transcript Parsing (parse_transcript_for_handoffs)
+# =============================================================================
+
+
+class TestSanitizeText:
+    """Tests for _sanitize_text static method."""
+
+    def test_sanitize_text_removes_control_characters(self, manager: "LessonsManager"):
+        """Control characters should be removed."""
+        text = "Hello\x00World\x07\x08"
+        result = manager._sanitize_text(text)
+        # Control chars are stripped without adding space
+        assert result == "HelloWorld"
+
+    def test_sanitize_text_preserves_unicode(self, manager: "LessonsManager"):
+        """Common unicode characters should be preserved."""
+        text = "Hello World cafe"
+        result = manager._sanitize_text(text)
+        assert "cafe" in result
+
+    def test_sanitize_text_collapses_spaces(self, manager: "LessonsManager"):
+        """Multiple spaces should be collapsed to single space."""
+        text = "Hello    World    Test"
+        result = manager._sanitize_text(text)
+        assert result == "Hello World Test"
+
+    def test_sanitize_text_truncates(self, manager: "LessonsManager"):
+        """Text should be truncated to max_length."""
+        text = "a" * 100
+        result = manager._sanitize_text(text, max_length=50)
+        assert len(result) == 50
+
+    def test_sanitize_text_trims_whitespace(self, manager: "LessonsManager"):
+        """Leading and trailing whitespace should be trimmed."""
+        text = "  Hello World  "
+        result = manager._sanitize_text(text)
+        assert result == "Hello World"
+
+    def test_sanitize_text_empty_string(self, manager: "LessonsManager"):
+        """Empty string should return empty string."""
+        result = manager._sanitize_text("")
+        assert result == ""
+
+    def test_sanitize_text_none_like(self, manager: "LessonsManager"):
+        """None-like empty values should return empty string."""
+        result = manager._sanitize_text(None)
+        assert result == ""
+
+
+class TestInferBlockedBy:
+    """Tests for _infer_blocked_by static method."""
+
+    def test_infer_blocked_by_waiting_for(self, manager: "LessonsManager"):
+        """Should detect 'waiting for <ID>' pattern."""
+        text = "We need to finish this task, waiting for hf-abc1234 to complete first"
+        result = manager._infer_blocked_by(text)
+        assert "hf-abc1234" in result
+
+    def test_infer_blocked_by_blocked_by(self, manager: "LessonsManager"):
+        """Should detect 'blocked by <ID>' pattern."""
+        text = "This is blocked by A001"
+        result = manager._infer_blocked_by(text)
+        assert "A001" in result
+
+    def test_infer_blocked_by_depends_on(self, manager: "LessonsManager"):
+        """Should detect 'depends on <ID>' pattern."""
+        text = "This feature depends on hf-1234567"
+        result = manager._infer_blocked_by(text)
+        assert "hf-1234567" in result
+
+    def test_infer_blocked_by_after_completes(self, manager: "LessonsManager"):
+        """Should detect 'after <ID> completes' pattern."""
+        text = "Start this after A002 completes"
+        result = manager._infer_blocked_by(text)
+        assert "A002" in result
+
+    def test_infer_blocked_by_multiple(self, manager: "LessonsManager"):
+        """Should detect multiple blockers."""
+        text = "Waiting for hf-abc1234 and depends on A001"
+        result = manager._infer_blocked_by(text)
+        assert "hf-abc1234" in result
+        assert "A001" in result
+        assert len(result) == 2
+
+    def test_infer_blocked_by_no_matches(self, manager: "LessonsManager"):
+        """Should return empty list when no blockers found."""
+        text = "This is a normal description with no dependencies"
+        result = manager._infer_blocked_by(text)
+        assert result == []
+
+    def test_infer_blocked_by_empty_text(self, manager: "LessonsManager"):
+        """Should return empty list for empty text."""
+        result = manager._infer_blocked_by("")
+        assert result == []
+
+    def test_infer_blocked_by_case_insensitive(self, manager: "LessonsManager"):
+        """Patterns should be case-insensitive."""
+        text = "WAITING FOR hf-abc1234 and BLOCKED BY A001"
+        result = manager._infer_blocked_by(text)
+        assert "hf-abc1234" in result
+        assert "A001" in result
+
+
+class TestParseTranscriptForHandoffs:
+    """Tests for parse_transcript_for_handoffs method."""
+
+    def test_parse_handoff_add(self, manager: "LessonsManager"):
+        """Should parse HANDOFF: pattern."""
+        transcript = {
+            "assistant_texts": ["HANDOFF: Implement new feature"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert len(result) == 1
+        assert result[0]["op"] == "add"
+        assert result[0]["title"] == "Implement new feature"
+
+    def test_parse_handoff_add_with_description(self, manager: "LessonsManager"):
+        """Should parse HANDOFF: pattern with description."""
+        transcript = {
+            "assistant_texts": ["HANDOFF: Implement feature - This is a detailed description"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert len(result) == 1
+        assert result[0]["op"] == "add"
+        assert result[0]["title"] == "Implement feature"
+        assert result[0]["desc"] == "This is a detailed description"
+
+    def test_parse_plan_mode(self, manager: "LessonsManager"):
+        """Should parse PLAN MODE: pattern."""
+        transcript = {
+            "assistant_texts": ["PLAN MODE: Design new architecture"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert len(result) == 1
+        assert result[0]["op"] == "add"
+        assert result[0]["title"] == "Design new architecture"
+        assert result[0]["phase"] == "research"
+        assert result[0]["agent"] == "plan"
+
+    def test_parse_handoff_update_status(self, manager: "LessonsManager"):
+        """Should parse HANDOFF UPDATE status pattern."""
+        transcript = {
+            "assistant_texts": ["HANDOFF UPDATE hf-abc1234: status in_progress"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert len(result) == 1
+        assert result[0]["op"] == "update"
+        assert result[0]["id"] == "hf-abc1234"
+        assert result[0]["status"] == "in_progress"
+
+    def test_parse_handoff_update_phase(self, manager: "LessonsManager"):
+        """Should parse HANDOFF UPDATE phase pattern."""
+        transcript = {
+            "assistant_texts": ["HANDOFF UPDATE A001: phase implementing"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert len(result) == 1
+        assert result[0]["op"] == "update"
+        assert result[0]["id"] == "A001"
+        assert result[0]["phase"] == "implementing"
+
+    def test_parse_handoff_update_agent(self, manager: "LessonsManager"):
+        """Should parse HANDOFF UPDATE agent pattern."""
+        transcript = {
+            "assistant_texts": ["HANDOFF UPDATE hf-abc1234: agent explore"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert len(result) == 1
+        assert result[0]["op"] == "update"
+        assert result[0]["id"] == "hf-abc1234"
+        assert result[0]["agent"] == "explore"
+
+    def test_parse_handoff_update_desc(self, manager: "LessonsManager"):
+        """Should parse HANDOFF UPDATE desc pattern."""
+        transcript = {
+            "assistant_texts": ["HANDOFF UPDATE hf-abc1234: desc Updated description text"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert len(result) == 1
+        assert result[0]["op"] == "update"
+        assert result[0]["id"] == "hf-abc1234"
+        assert result[0]["desc"] == "Updated description text"
+
+    def test_parse_handoff_update_tried_success(self, manager: "LessonsManager"):
+        """Should parse HANDOFF UPDATE tried pattern with success outcome."""
+        transcript = {
+            "assistant_texts": ["HANDOFF UPDATE hf-abc1234: tried success - Implemented the feature"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert len(result) == 1
+        assert result[0]["op"] == "update"
+        assert result[0]["id"] == "hf-abc1234"
+        assert result[0]["tried"] == ["success", "Implemented the feature"]
+
+    def test_parse_handoff_update_tried_fail(self, manager: "LessonsManager"):
+        """Should parse HANDOFF UPDATE tried pattern with fail outcome."""
+        transcript = {
+            "assistant_texts": ["HANDOFF UPDATE hf-abc1234: tried fail - Approach did not work"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert len(result) == 1
+        assert result[0]["tried"] == ["fail", "Approach did not work"]
+
+    def test_parse_handoff_update_tried_partial(self, manager: "LessonsManager"):
+        """Should parse HANDOFF UPDATE tried pattern with partial outcome."""
+        transcript = {
+            "assistant_texts": ["HANDOFF UPDATE hf-abc1234: tried partial - Works but needs more"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert len(result) == 1
+        assert result[0]["tried"] == ["partial", "Works but needs more"]
+
+    def test_parse_handoff_update_tried_invalid_outcome(self, manager: "LessonsManager"):
+        """Should skip HANDOFF UPDATE tried with invalid outcome."""
+        transcript = {
+            "assistant_texts": ["HANDOFF UPDATE hf-abc1234: tried maybe - Not a valid outcome"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert len(result) == 0
+
+    def test_parse_handoff_update_next(self, manager: "LessonsManager"):
+        """Should parse HANDOFF UPDATE next pattern."""
+        transcript = {
+            "assistant_texts": ["HANDOFF UPDATE hf-abc1234: next Write tests for the new feature"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert len(result) == 1
+        assert result[0]["op"] == "update"
+        assert result[0]["id"] == "hf-abc1234"
+        assert result[0]["next"] == "Write tests for the new feature"
+
+    def test_parse_handoff_update_next_with_inferred_blockers(self, manager: "LessonsManager"):
+        """Should infer blocked_by from next text."""
+        # Note: hf-IDs must be valid hex (0-9, a-f)
+        transcript = {
+            "assistant_texts": ["HANDOFF UPDATE hf-abc1234: next Waiting for hf-def5678 to complete first"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert len(result) == 1
+        assert result[0]["op"] == "update"
+        assert result[0]["next"] == "Waiting for hf-def5678 to complete first"
+        assert "blocked_by" in result[0]
+        assert "hf-def5678" in result[0]["blocked_by"]
+
+    def test_parse_handoff_update_blocked_by(self, manager: "LessonsManager"):
+        """Should parse HANDOFF UPDATE blocked_by pattern."""
+        transcript = {
+            "assistant_texts": ["HANDOFF UPDATE hf-abc1234: blocked_by A001,A002"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert len(result) == 1
+        assert result[0]["op"] == "update"
+        assert result[0]["id"] == "hf-abc1234"
+        assert result[0]["blocked_by"] == "A001,A002"
+
+    def test_parse_handoff_update_checkpoint(self, manager: "LessonsManager"):
+        """Should parse HANDOFF UPDATE checkpoint pattern."""
+        transcript = {
+            "assistant_texts": ["HANDOFF UPDATE hf-abc1234: checkpoint Finished implementing core logic"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert len(result) == 1
+        assert result[0]["op"] == "update"
+        assert result[0]["id"] == "hf-abc1234"
+        assert result[0]["checkpoint"] == "Finished implementing core logic"
+
+    def test_parse_handoff_complete(self, manager: "LessonsManager"):
+        """Should parse HANDOFF COMPLETE pattern."""
+        transcript = {
+            "assistant_texts": ["HANDOFF COMPLETE hf-abc1234"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert len(result) == 1
+        assert result[0]["op"] == "complete"
+        assert result[0]["id"] == "hf-abc1234"
+
+    def test_parse_handoff_complete_legacy_format(self, manager: "LessonsManager"):
+        """Should parse HANDOFF COMPLETE with legacy A### format."""
+        transcript = {
+            "assistant_texts": ["HANDOFF COMPLETE A001"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert len(result) == 1
+        assert result[0]["op"] == "complete"
+        assert result[0]["id"] == "A001"
+
+    def test_parse_handoff_update_with_last(self, manager: "LessonsManager"):
+        """Should parse HANDOFF UPDATE with LAST reference."""
+        transcript = {
+            "assistant_texts": ["HANDOFF UPDATE LAST: status in_progress"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert len(result) == 1
+        assert result[0]["op"] == "update"
+        assert result[0]["id"] == "LAST"
+        assert result[0]["status"] == "in_progress"
+
+    def test_parse_handoff_complete_with_last(self, manager: "LessonsManager"):
+        """Should parse HANDOFF COMPLETE with LAST reference."""
+        transcript = {
+            "assistant_texts": ["HANDOFF COMPLETE LAST"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert len(result) == 1
+        assert result[0]["op"] == "complete"
+        assert result[0]["id"] == "LAST"
+
+    def test_parse_multiple_patterns(self, manager: "LessonsManager"):
+        """Should parse multiple patterns from same text block."""
+        transcript = {
+            "assistant_texts": [
+                "HANDOFF: Implement feature\nHANDOFF UPDATE LAST: status in_progress\nHANDOFF UPDATE LAST: tried success - Done"
+            ]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert len(result) == 3
+        assert result[0]["op"] == "add"
+        assert result[1]["op"] == "update"
+        assert result[1]["status"] == "in_progress"
+        assert result[2]["op"] == "update"
+        assert result[2]["tried"] == ["success", "Done"]
+
+    def test_parse_multiple_text_blocks(self, manager: "LessonsManager"):
+        """Should parse patterns from multiple text blocks."""
+        transcript = {
+            "assistant_texts": [
+                "HANDOFF: First feature",
+                "HANDOFF: Second feature",
+            ]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert len(result) == 2
+        assert result[0]["title"] == "First feature"
+        assert result[1]["title"] == "Second feature"
+
+    def test_parse_prefers_new_texts(self, manager: "LessonsManager"):
+        """Should prefer assistant_texts_new when available."""
+        transcript = {
+            "assistant_texts": ["HANDOFF: Old feature"],
+            "assistant_texts_new": ["HANDOFF: New feature"],
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert len(result) == 1
+        assert result[0]["title"] == "New feature"
+
+    def test_parse_falls_back_to_all_texts(self, manager: "LessonsManager"):
+        """Should fall back to assistant_texts when no new texts."""
+        transcript = {
+            "assistant_texts": ["HANDOFF: Some feature"],
+            "assistant_texts_new": [],
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert len(result) == 1
+        assert result[0]["title"] == "Some feature"
+
+    def test_parse_empty_transcript(self, manager: "LessonsManager"):
+        """Should return empty list for empty transcript."""
+        transcript = {}
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert result == []
+
+    def test_parse_empty_texts(self, manager: "LessonsManager"):
+        """Should return empty list for empty text arrays."""
+        transcript = {"assistant_texts": [], "assistant_texts_new": []}
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert result == []
+
+    def test_parse_ignores_non_string_texts(self, manager: "LessonsManager"):
+        """Should ignore non-string entries in text arrays."""
+        transcript = {
+            "assistant_texts": [None, 123, {"obj": "value"}, "HANDOFF: Valid feature"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert len(result) == 1
+        assert result[0]["title"] == "Valid feature"
+
+    def test_parse_skips_long_lines(self, manager: "LessonsManager"):
+        """Should skip lines over 1000 characters to prevent ReDoS."""
+        long_line = "HANDOFF: " + "a" * 1000
+        transcript = {
+            "assistant_texts": [long_line, "HANDOFF: Short feature"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        # Only the short feature should be parsed
+        assert len(result) == 1
+        assert result[0]["title"] == "Short feature"
+
+    def test_parse_sanitizes_title(self, manager: "LessonsManager"):
+        """Should sanitize title text."""
+        transcript = {
+            "assistant_texts": ["HANDOFF: Feature    with     many   spaces"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert result[0]["title"] == "Feature with many spaces"
+
+    def test_parse_no_match(self, manager: "LessonsManager"):
+        """Should return empty for text with no matching patterns."""
+        transcript = {
+            "assistant_texts": ["This is just normal text without any handoff patterns"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        assert result == []
+
+
+class TestParseTranscriptIntegration:
+    """Integration tests for parse_transcript_for_handoffs + batch_process."""
+
+    def test_parse_and_process_add(self, manager: "LessonsManager"):
+        """Should parse and process add operation."""
+        transcript = {
+            "assistant_texts": ["HANDOFF: New integration feature"]
+        }
+        operations = manager.parse_transcript_for_handoffs(transcript)
+        result = manager.handoff_batch_process(operations)
+
+        assert len(result["results"]) == 1
+        assert result["results"][0]["ok"] is True
+        assert result["last_id"] is not None
+
+        # Verify handoff was created
+        handoff = manager.handoff_get(result["last_id"])
+        assert handoff is not None
+        assert handoff.title == "New integration feature"
+
+    def test_parse_and_process_add_then_update(self, manager: "LessonsManager"):
+        """Should parse and process add followed by update with LAST."""
+        transcript = {
+            "assistant_texts": [
+                "HANDOFF: Feature to update\nHANDOFF UPDATE LAST: status in_progress\nHANDOFF UPDATE LAST: tried success - Completed step 1"
+            ]
+        }
+        operations = manager.parse_transcript_for_handoffs(transcript)
+        result = manager.handoff_batch_process(operations)
+
+        assert len(result["results"]) == 3
+        assert all(r["ok"] for r in result["results"])
+
+        # Verify handoff state
+        handoff = manager.handoff_get(result["last_id"])
+        assert handoff is not None
+        assert handoff.status == "in_progress"
+        assert len(handoff.tried) == 1
+        assert handoff.tried[0].outcome == "success"
+
+    def test_parse_and_process_complete(self, manager: "LessonsManager"):
+        """Should parse and process complete operation."""
+        transcript = {
+            "assistant_texts": [
+                "HANDOFF: Feature to complete\nHANDOFF COMPLETE LAST"
+            ]
+        }
+        operations = manager.parse_transcript_for_handoffs(transcript)
+        result = manager.handoff_batch_process(operations)
+
+        assert len(result["results"]) == 2
+        assert all(r["ok"] for r in result["results"])
+
+        # Verify handoff is completed
+        handoff = manager.handoff_get(result["last_id"])
+        assert handoff is not None
+        assert handoff.status == "completed"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

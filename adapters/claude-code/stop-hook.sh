@@ -159,54 +159,6 @@ find_project_root() {
     echo "$1"
 }
 
-# Infer blocked_by dependencies from natural language patterns in text.
-# Patterns detected:
-#   - "waiting for X" -> blocked_by X
-#   - "blocked by Y" -> blocked_by Y
-#   - "depends on Z" -> blocked_by Z
-#   - "after A completes" -> blocked_by A
-# Where X/Y/Z/A are handoff IDs (A### or hf-XXXXXXX format)
-# Returns comma-separated list of blocker IDs, or empty if none found.
-infer_blocked_by() {
-    local text="$1"
-    local blockers=""
-
-    # Pattern: "waiting for <ID>"
-    local waiting_matches
-    waiting_matches=$(echo "$text" | grep -oE 'waiting for (hf-[0-9a-f]{7}|[A-Z][0-9]{3})' | \
-        grep -oE '(hf-[0-9a-f]{7}|[A-Z][0-9]{3})' || true)
-    [[ -n "$waiting_matches" ]] && blockers="$waiting_matches"
-
-    # Pattern: "blocked by <ID>"
-    local blocked_matches
-    blocked_matches=$(echo "$text" | grep -oE 'blocked by (hf-[0-9a-f]{7}|[A-Z][0-9]{3})' | \
-        grep -oE '(hf-[0-9a-f]{7}|[A-Z][0-9]{3})' || true)
-    if [[ -n "$blocked_matches" ]]; then
-        [[ -n "$blockers" ]] && blockers="$blockers"$'\n'"$blocked_matches" || blockers="$blocked_matches"
-    fi
-
-    # Pattern: "depends on <ID>"
-    local depends_matches
-    depends_matches=$(echo "$text" | grep -oE 'depends on (hf-[0-9a-f]{7}|[A-Z][0-9]{3})' | \
-        grep -oE '(hf-[0-9a-f]{7}|[A-Z][0-9]{3})' || true)
-    if [[ -n "$depends_matches" ]]; then
-        [[ -n "$blockers" ]] && blockers="$blockers"$'\n'"$depends_matches" || blockers="$depends_matches"
-    fi
-
-    # Pattern: "after <ID> completes"
-    local after_matches
-    after_matches=$(echo "$text" | grep -oE 'after (hf-[0-9a-f]{7}|[A-Z][0-9]{3}) completes' | \
-        grep -oE '(hf-[0-9a-f]{7}|[A-Z][0-9]{3})' || true)
-    if [[ -n "$after_matches" ]]; then
-        [[ -n "$blockers" ]] && blockers="$blockers"$'\n'"$after_matches" || blockers="$after_matches"
-    fi
-
-    # Deduplicate and format as comma-separated list
-    if [[ -n "$blockers" ]]; then
-        echo "$blockers" | sort -u | tr '\n' ',' | sed 's/,$//'
-    fi
-}
-
 # Clean up orphaned checkpoint files (transcripts deleted but checkpoints remain)
 # Runs opportunistically: max 10 files per invocation, only files >7 days old
 cleanup_orphaned_checkpoints() {
@@ -374,7 +326,12 @@ process_ai_lessons() {
 #   HANDOFF UPDATE <id>|LAST: desc <text>                -> handoff update ID --desc "<text>"
 #   HANDOFF UPDATE <id>|LAST: tried <outcome> - <desc>   -> handoff update ID --tried <outcome> "<desc>"
 #   HANDOFF UPDATE <id>|LAST: next <text>                -> handoff update ID --next "<text>"
+#   HANDOFF UPDATE <id>|LAST: checkpoint <text>          -> handoff update ID --checkpoint "<text>"
+#   HANDOFF UPDATE <id>|LAST: blocked_by <id>,<id>       -> handoff update ID --blocked-by "<ids>"
 #   HANDOFF COMPLETE <id>|LAST                           -> handoff complete ID
+#
+# This function uses a single Python call to parse all patterns and process them.
+# All parsing, sanitization, and sub-agent detection happens in Python.
 process_handoffs() {
     local transcript_path="$1"
     local project_root="$2"
@@ -382,173 +339,23 @@ process_handoffs() {
     local session_id="$4"
     local processed_count=0
 
-    # Detect session origin to prevent sub-agents from creating handoffs
-    # Sub-agents (Explore, Plan, General, System) can only UPDATE existing handoffs
-    local session_origin="User"
-    if [[ -n "$session_id" && -f "$PYTHON_MANAGER" ]]; then
-        session_origin=$(PROJECT_DIR="$project_root" python3 "$PYTHON_MANAGER" session detect-origin "$session_id" 2>/dev/null || echo "User")
-    fi
-    local is_sub_agent=false
-    if [[ "$session_origin" == "Explore" || "$session_origin" == "Plan" || "$session_origin" == "General" || "$session_origin" == "System" ]]; then
-        is_sub_agent=true
-    fi
+    # Skip if no Python manager available
+    [[ ! -f "$PYTHON_MANAGER" ]] && return 0
 
-    # Extract handoff patterns from cached assistant texts
-    # Use cached data - select appropriate field based on timestamp
-    local texts_field="assistant_texts"
-    [[ -n "$last_timestamp" ]] && texts_field="assistant_texts_new"
-    local pattern_lines=""
-    pattern_lines=$(echo "$TRANSCRIPT_CACHE" | jq -r --arg f "$texts_field" '.[$f][]' 2>/dev/null | \
-        grep -E '^(HANDOFF( UPDATE| COMPLETE)?|PLAN MODE):?' || true)
+    # Skip if no transcript cache
+    [[ -z "$TRANSCRIPT_CACHE" ]] && return 0
 
-    [[ -z "$pattern_lines" ]] && return 0
+    # Build session-id argument if provided
+    local session_arg=""
+    [[ -n "$session_id" ]] && session_arg="--session-id $session_id"
 
-    # Collect operations as newline-separated JSON objects (slurped into array at end)
-    local op_lines=""
+    # Single Python call parses patterns, handles sub-agent blocking, and processes all operations
+    local result
+    result=$(echo "$TRANSCRIPT_CACHE" | PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
+        python3 "$PYTHON_MANAGER" handoff process-transcript $session_arg 2>&1 || true)
 
-    while IFS= read -r line; do
-        [[ -z "$line" ]] && continue
-        # H2: Skip overly long lines to prevent ReDoS in regex matching
-        [[ ${#line} -gt 1000 ]] && continue
-
-        local op_json=""
-
-        # Pattern 1: HANDOFF: <title> [- <description>] -> add new handoff
-        # NOTE: Sub-agents (Explore, Plan, General, System) are blocked from creating handoffs
-        if [[ "$line" =~ ^HANDOFF:\ (.+)$ ]]; then
-            # Block sub-agents from creating handoffs - they should only UPDATE
-            if [[ "$is_sub_agent" == true ]]; then
-                echo "[stop-hook] Blocked HANDOFF: from $session_origin sub-agent (use parent session)" >&2
-                continue
-            fi
-
-            local full_match="${BASH_REMATCH[1]}"
-            local title=""
-            local desc=""
-
-            # Check for " - " separator (description follows)
-            if [[ "$full_match" =~ ^(.+)\ -\ (.+)$ ]]; then
-                title="${BASH_REMATCH[1]}"
-                desc="${BASH_REMATCH[2]}"
-            else
-                title="$full_match"
-            fi
-
-            title=$(sanitize_input "$title" 200)
-            [[ -z "$title" ]] && continue
-            desc=$(sanitize_input "$desc" 500)
-
-            if [[ -n "$desc" ]]; then
-                op_json=$(jq -n --arg t "$title" --arg d "$desc" '{op: "add", title: $t, desc: $d}')
-            else
-                op_json=$(jq -n --arg t "$title" '{op: "add", title: $t}')
-            fi
-
-        # Pattern 1b: PLAN MODE: <title> -> add handoff with plan mode defaults
-        # NOTE: Sub-agents are blocked from creating handoffs via PLAN MODE
-        elif [[ "$line" =~ ^PLAN\ MODE:\ (.+)$ ]]; then
-            # Block sub-agents from creating handoffs - they should only UPDATE
-            if [[ "$is_sub_agent" == true ]]; then
-                echo "[stop-hook] Blocked PLAN MODE: from $session_origin sub-agent (use parent session)" >&2
-                continue
-            fi
-
-            local title="${BASH_REMATCH[1]}"
-            title=$(sanitize_input "$title" 200)
-            [[ -z "$title" ]] && continue
-
-            op_json=$(jq -n --arg t "$title" '{op: "add", title: $t, phase: "research", agent: "plan"}')
-
-        # Pattern 2: HANDOFF UPDATE <id>|LAST: status <status>
-        elif [[ "$line" =~ ^HANDOFF\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ status\ (.+)$ ]]; then
-            local handoff_id="${BASH_REMATCH[1]}"
-            local status="${BASH_REMATCH[2]}"
-            status=$(sanitize_input "$status" 20)
-
-            op_json=$(jq -n --arg i "$handoff_id" --arg s "$status" '{op: "update", id: $i, status: $s}')
-
-        # Pattern 2b: HANDOFF UPDATE <id>|LAST: phase <phase>
-        elif [[ "$line" =~ ^HANDOFF\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ phase\ (.+)$ ]]; then
-            local handoff_id="${BASH_REMATCH[1]}"
-            local phase="${BASH_REMATCH[2]}"
-            phase=$(sanitize_input "$phase" 20)
-
-            op_json=$(jq -n --arg i "$handoff_id" --arg p "$phase" '{op: "update", id: $i, phase: $p}')
-
-        # Pattern 2c: HANDOFF UPDATE <id>|LAST: agent <agent>
-        elif [[ "$line" =~ ^HANDOFF\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ agent\ (.+)$ ]]; then
-            local handoff_id="${BASH_REMATCH[1]}"
-            local agent="${BASH_REMATCH[2]}"
-            agent=$(sanitize_input "$agent" 30)
-
-            op_json=$(jq -n --arg i "$handoff_id" --arg a "$agent" '{op: "update", id: $i, agent: $a}')
-
-        # Pattern 2d: HANDOFF UPDATE <id>|LAST: desc <text>
-        elif [[ "$line" =~ ^HANDOFF\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ desc\ (.+)$ ]]; then
-            local handoff_id="${BASH_REMATCH[1]}"
-            local desc_text="${BASH_REMATCH[2]}"
-            desc_text=$(sanitize_input "$desc_text" 500)
-
-            op_json=$(jq -n --arg i "$handoff_id" --arg d "$desc_text" '{op: "update", id: $i, desc: $d}')
-
-        # Pattern 3: HANDOFF UPDATE <id>|LAST: tried <outcome> - <description>
-        elif [[ "$line" =~ ^HANDOFF\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ tried\ ([a-z]+)\ -\ (.+)$ ]]; then
-            local handoff_id="${BASH_REMATCH[1]}"
-            local outcome="${BASH_REMATCH[2]}"
-            local description="${BASH_REMATCH[3]}"
-            # Validate outcome is one of the expected values
-            [[ "$outcome" =~ ^(success|fail|partial)$ ]] || continue
-            description=$(sanitize_input "$description" 500)
-
-            op_json=$(jq -n --arg i "$handoff_id" --arg o "$outcome" --arg d "$description" '{op: "update", id: $i, tried: [$o, $d]}')
-
-        # Pattern 4: HANDOFF UPDATE <id>|LAST: next <text>
-        elif [[ "$line" =~ ^HANDOFF\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ next\ (.+)$ ]]; then
-            local handoff_id="${BASH_REMATCH[1]}"
-            local next_text="${BASH_REMATCH[2]}"
-            next_text=$(sanitize_input "$next_text" 500)
-
-            # Infer blocked_by from next_steps text patterns
-            local inferred_blockers
-            inferred_blockers=$(infer_blocked_by "$next_text")
-            if [[ -n "$inferred_blockers" ]]; then
-                op_json=$(jq -n --arg i "$handoff_id" --arg n "$next_text" --arg b "$inferred_blockers" '{op: "update", id: $i, next: $n, blocked_by: $b}')
-            else
-                op_json=$(jq -n --arg i "$handoff_id" --arg n "$next_text" '{op: "update", id: $i, next: $n}')
-            fi
-
-        # Pattern 4b: HANDOFF UPDATE <id>|LAST: blocked_by <id>,<id>,...
-        elif [[ "$line" =~ ^HANDOFF\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ blocked_by\ (.+)$ ]]; then
-            local handoff_id="${BASH_REMATCH[1]}"
-            local blocked_ids="${BASH_REMATCH[2]}"
-            blocked_ids=$(sanitize_input "$blocked_ids" 200)
-
-            op_json=$(jq -n --arg i "$handoff_id" --arg b "$blocked_ids" '{op: "update", id: $i, blocked_by: $b}')
-
-        # Pattern 5: HANDOFF COMPLETE <id>|LAST
-        elif [[ "$line" =~ ^HANDOFF\ COMPLETE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST)$ ]]; then
-            local handoff_id="${BASH_REMATCH[1]}"
-
-            op_json=$(jq -n --arg i "$handoff_id" '{op: "complete", id: $i}')
-        fi
-
-        # Collect operation (will be slurped into array at end)
-        [[ -n "$op_json" ]] && op_lines+="$op_json"$'\n'
-
-    done <<< "$pattern_lines"
-
-    # Skip if no operations collected
-    [[ -z "$op_lines" ]] && return 0
-
-    # Single Python call for all operations (jq -s slurps newline-delimited JSON into array)
-    if [[ -f "$PYTHON_MANAGER" ]]; then
-        local result
-        result=$(echo "$op_lines" | jq -s '.' | PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-            python3 "$PYTHON_MANAGER" handoff batch-process 2>&1 || true)
-
-        # Count successful operations
-        processed_count=$(echo "$result" | jq '[.results[] | select(.ok == true)] | length' 2>/dev/null || echo 0)
-    fi
+    # Count successful operations
+    processed_count=$(echo "$result" | jq '[.results[]? | select(.ok == true)] | length' 2>/dev/null || echo 0)
 
     (( processed_count > 0 )) && echo "[handoffs] $processed_count handoff command(s) processed" >&2
 }

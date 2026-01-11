@@ -2590,3 +2590,359 @@ Consider extracting lessons about:
                 self._write_handoffs_file(handoffs)
 
         return {"results": results, "last_id": last_created_id}
+
+    # -------------------------------------------------------------------------
+    # Transcript Parsing (for stop-hook optimization)
+    # -------------------------------------------------------------------------
+
+    # Sub-agent session origins that should be blocked from creating handoffs
+    SUB_AGENT_ORIGINS = {"Explore", "Plan", "General", "System"}
+
+    @staticmethod
+    def _sanitize_text(text: str, max_length: int = 500) -> str:
+        """
+        Sanitize text for safe storage.
+
+        - Removes control characters (keeps printable + common unicode)
+        - Collapses multiple spaces
+        - Truncates to max_length
+        - Trims whitespace
+
+        Args:
+            text: Input text to sanitize
+            max_length: Maximum length of output
+
+        Returns:
+            Sanitized text
+        """
+        if not text:
+            return ""
+
+        # Remove control characters (keep printable ASCII and common unicode)
+        # \x20-\x7E is printable ASCII, \u00A0-\uFFFF covers common unicode
+        result = "".join(
+            c for c in text
+            if c == "\n" or c == "\t" or ("\x20" <= c <= "\x7E") or ("\u00A0" <= c <= "\uFFFF")
+        )
+
+        # Collapse multiple spaces (but preserve newlines)
+        result = re.sub(r"[ \t]+", " ", result)
+
+        # Truncate to max length
+        if len(result) > max_length:
+            result = result[:max_length]
+
+        # Trim whitespace
+        result = result.strip()
+
+        return result
+
+    @staticmethod
+    def _infer_blocked_by(text: str) -> List[str]:
+        """
+        Infer blocked_by dependencies from natural language patterns in text.
+
+        Patterns detected:
+        - "waiting for X" -> blocked_by X
+        - "blocked by Y" -> blocked_by Y
+        - "depends on Z" -> blocked_by Z
+        - "after A completes" -> blocked_by A
+
+        Where X/Y/Z/A are handoff IDs (A### or hf-XXXXXXX format).
+
+        Args:
+            text: Text to analyze for dependency patterns
+
+        Returns:
+            List of unique blocker handoff IDs, empty if none found
+        """
+        if not text:
+            return []
+
+        blockers = set()
+
+        # Pattern matches hf-1234567 or A001 format IDs
+        handoff_id_pattern = r"(hf-[0-9a-f]{7}|[A-Z][0-9]{3})"
+
+        # Pattern: "waiting for <ID>"
+        for match in re.finditer(rf"waiting for {handoff_id_pattern}", text, re.IGNORECASE):
+            blockers.add(match.group(1))
+
+        # Pattern: "blocked by <ID>"
+        for match in re.finditer(rf"blocked by {handoff_id_pattern}", text, re.IGNORECASE):
+            blockers.add(match.group(1))
+
+        # Pattern: "depends on <ID>"
+        for match in re.finditer(rf"depends on {handoff_id_pattern}", text, re.IGNORECASE):
+            blockers.add(match.group(1))
+
+        # Pattern: "after <ID> completes"
+        for match in re.finditer(rf"after {handoff_id_pattern} completes", text, re.IGNORECASE):
+            blockers.add(match.group(1))
+
+        return list(blockers)
+
+    def _detect_session_origin(self, session_id: str) -> str:
+        """
+        Detect the origin type of a session.
+
+        Args:
+            session_id: The Claude session ID
+
+        Returns:
+            Origin type: "User", "Explore", "Plan", "General", "System", or "Unknown"
+        """
+        try:
+            from core.tui.transcript_reader import TranscriptReader
+        except ImportError:
+            try:
+                from tui.transcript_reader import TranscriptReader
+            except ImportError:
+                return "Unknown"
+
+        try:
+            reader = TranscriptReader()
+            sessions = reader.list_all_sessions(limit=500)
+            for session in sessions:
+                if session.session_id == session_id:
+                    return session.origin
+        except Exception:
+            pass
+
+        return "Unknown"
+
+    def parse_transcript_for_handoffs(
+        self,
+        transcript_data: dict,
+        session_id: str = "",
+        project_root: Optional[Path] = None,
+    ) -> List[dict]:
+        """
+        Parse transcript data for handoff-related patterns.
+
+        This method extracts handoff operations from transcript text, performing
+        all parsing and sanitization in Python (no subprocess calls).
+
+        Args:
+            transcript_data: Dict with 'assistant_texts' and/or 'assistant_texts_new' arrays
+            session_id: Optional Claude session ID for sub-agent detection
+            project_root: Optional project root (defaults to self.project_root)
+
+        Returns:
+            List of operation dicts ready for handoff_batch_process():
+                {"op": "add", "title": "...", "desc": "...", "phase": "...", "agent": "..."}
+                {"op": "update", "id": "...", "status|phase|agent|desc|tried|next|checkpoint|blocked_by": ...}
+                {"op": "complete", "id": "..."}
+        """
+        operations = []
+
+        # Get text arrays from transcript data
+        # Prefer assistant_texts_new (incremental) if available, else use assistant_texts
+        texts = transcript_data.get("assistant_texts_new", [])
+        if not texts:
+            texts = transcript_data.get("assistant_texts", [])
+
+        if not texts:
+            return operations
+
+        # Detect if this is a sub-agent session
+        is_sub_agent = False
+        if session_id:
+            origin = self._detect_session_origin(session_id)
+            if origin in self.SUB_AGENT_ORIGINS:
+                is_sub_agent = True
+
+        # Handoff ID pattern (hf-1234567 or legacy A001 format)
+        handoff_id_pattern = r"(hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST)"
+
+        # Process each text block for handoff patterns
+        for text in texts:
+            if not isinstance(text, str):
+                continue
+
+            # Process line by line to find patterns
+            for line in text.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+
+                # Skip overly long lines to prevent ReDoS
+                if len(line) > 1000:
+                    continue
+
+                # Pattern 1: HANDOFF: <title> [- <description>]
+                match = re.match(r"^HANDOFF:\s+(.+)$", line)
+                if match:
+                    if is_sub_agent:
+                        # Sub-agents cannot create handoffs
+                        continue
+
+                    full_match = match.group(1)
+                    # Check for " - " separator
+                    sep_match = re.match(r"^(.+?)\s+-\s+(.+)$", full_match)
+                    if sep_match:
+                        title = self._sanitize_text(sep_match.group(1), 200)
+                        desc = self._sanitize_text(sep_match.group(2), 500)
+                    else:
+                        title = self._sanitize_text(full_match, 200)
+                        desc = ""
+
+                    if title:
+                        op = {"op": "add", "title": title}
+                        if desc:
+                            op["desc"] = desc
+                        operations.append(op)
+                    continue
+
+                # Pattern 1b: PLAN MODE: <title>
+                match = re.match(r"^PLAN MODE:\s+(.+)$", line)
+                if match:
+                    if is_sub_agent:
+                        continue
+
+                    title = self._sanitize_text(match.group(1), 200)
+                    if title:
+                        operations.append({
+                            "op": "add",
+                            "title": title,
+                            "phase": "research",
+                            "agent": "plan",
+                        })
+                    continue
+
+                # Pattern 2: HANDOFF UPDATE <id>: status <status>
+                match = re.match(
+                    rf"^HANDOFF UPDATE {handoff_id_pattern}:\s+status\s+(.+)$", line
+                )
+                if match:
+                    handoff_id = match.group(1)
+                    status = self._sanitize_text(match.group(2), 20)
+                    operations.append({
+                        "op": "update",
+                        "id": handoff_id,
+                        "status": status,
+                    })
+                    continue
+
+                # Pattern 2b: HANDOFF UPDATE <id>: phase <phase>
+                match = re.match(
+                    rf"^HANDOFF UPDATE {handoff_id_pattern}:\s+phase\s+(.+)$", line
+                )
+                if match:
+                    handoff_id = match.group(1)
+                    phase = self._sanitize_text(match.group(2), 20)
+                    operations.append({
+                        "op": "update",
+                        "id": handoff_id,
+                        "phase": phase,
+                    })
+                    continue
+
+                # Pattern 2c: HANDOFF UPDATE <id>: agent <agent>
+                match = re.match(
+                    rf"^HANDOFF UPDATE {handoff_id_pattern}:\s+agent\s+(.+)$", line
+                )
+                if match:
+                    handoff_id = match.group(1)
+                    agent = self._sanitize_text(match.group(2), 30)
+                    operations.append({
+                        "op": "update",
+                        "id": handoff_id,
+                        "agent": agent,
+                    })
+                    continue
+
+                # Pattern 2d: HANDOFF UPDATE <id>: desc <text>
+                match = re.match(
+                    rf"^HANDOFF UPDATE {handoff_id_pattern}:\s+desc\s+(.+)$", line
+                )
+                if match:
+                    handoff_id = match.group(1)
+                    desc = self._sanitize_text(match.group(2), 500)
+                    operations.append({
+                        "op": "update",
+                        "id": handoff_id,
+                        "desc": desc,
+                    })
+                    continue
+
+                # Pattern 3: HANDOFF UPDATE <id>: tried <outcome> - <description>
+                match = re.match(
+                    rf"^HANDOFF UPDATE {handoff_id_pattern}:\s+tried\s+(\w+)\s+-\s+(.+)$",
+                    line,
+                )
+                if match:
+                    handoff_id = match.group(1)
+                    outcome = match.group(2).lower()
+                    description = self._sanitize_text(match.group(3), 500)
+
+                    # Validate outcome
+                    if outcome in ("success", "fail", "partial"):
+                        operations.append({
+                            "op": "update",
+                            "id": handoff_id,
+                            "tried": [outcome, description],
+                        })
+                    continue
+
+                # Pattern 4: HANDOFF UPDATE <id>: next <text>
+                match = re.match(
+                    rf"^HANDOFF UPDATE {handoff_id_pattern}:\s+next\s+(.+)$", line
+                )
+                if match:
+                    handoff_id = match.group(1)
+                    next_text = self._sanitize_text(match.group(2), 500)
+
+                    op = {
+                        "op": "update",
+                        "id": handoff_id,
+                        "next": next_text,
+                    }
+
+                    # Infer blocked_by from next text
+                    blocked_by = self._infer_blocked_by(next_text)
+                    if blocked_by:
+                        op["blocked_by"] = ",".join(blocked_by)
+
+                    operations.append(op)
+                    continue
+
+                # Pattern 4b: HANDOFF UPDATE <id>: blocked_by <ids>
+                match = re.match(
+                    rf"^HANDOFF UPDATE {handoff_id_pattern}:\s+blocked_by\s+(.+)$", line
+                )
+                if match:
+                    handoff_id = match.group(1)
+                    blocked_ids = self._sanitize_text(match.group(2), 200)
+                    operations.append({
+                        "op": "update",
+                        "id": handoff_id,
+                        "blocked_by": blocked_ids,
+                    })
+                    continue
+
+                # Pattern 4c: HANDOFF UPDATE <id>: checkpoint <text>
+                match = re.match(
+                    rf"^HANDOFF UPDATE {handoff_id_pattern}:\s+checkpoint\s+(.+)$", line
+                )
+                if match:
+                    handoff_id = match.group(1)
+                    checkpoint = self._sanitize_text(match.group(2), 500)
+                    operations.append({
+                        "op": "update",
+                        "id": handoff_id,
+                        "checkpoint": checkpoint,
+                    })
+                    continue
+
+                # Pattern 5: HANDOFF COMPLETE <id>
+                match = re.match(rf"^HANDOFF COMPLETE {handoff_id_pattern}$", line)
+                if match:
+                    handoff_id = match.group(1)
+                    operations.append({
+                        "op": "complete",
+                        "id": handoff_id,
+                    })
+                    continue
+
+        return operations

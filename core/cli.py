@@ -267,6 +267,18 @@ def main():
         help="Process multiple handoff operations in one call (reads JSON from stdin)"
     )
 
+    # handoff process-transcript (parse transcript and process handoffs in one call)
+    process_transcript_parser = handoff_subparsers.add_parser(
+        "process-transcript",
+        help="Parse transcript JSON for handoff patterns and process them (reads JSON from stdin)"
+    )
+    process_transcript_parser.add_argument(
+        "--session-id", help="Claude session ID for sub-agent detection"
+    )
+    process_transcript_parser.add_argument(
+        "--since", help="Timestamp to filter for incremental processing"
+    )
+
     # watch command - TUI debug viewer
     watch_parser = subparsers.add_parser("watch", help="Launch debug TUI viewer")
     watch_parser.add_argument("--project", "-p", help="Filter to specific project")
@@ -670,6 +682,28 @@ def main():
                     sys.exit(1)
                 result = manager.handoff_batch_process(operations)
                 print(json_module.dumps(result))
+
+            elif args.handoff_command == "process-transcript":
+                # Read transcript JSON from stdin, parse for handoffs, and process
+                transcript_data = json_module.loads(sys.stdin.read())
+                if not isinstance(transcript_data, dict):
+                    print("Error: Expected JSON object with assistant_texts array", file=sys.stderr)
+                    sys.exit(1)
+
+                session_id = getattr(args, 'session_id', "") or ""
+                # Parse transcript for handoff operations
+                operations = manager.parse_transcript_for_handoffs(
+                    transcript_data,
+                    session_id=session_id,
+                )
+
+                if operations:
+                    # Process all operations in batch
+                    result = manager.handoff_batch_process(operations)
+                    print(json_module.dumps(result))
+                else:
+                    # No operations found
+                    print(json_module.dumps({"results": [], "last_id": None}))
 
         elif args.command == "watch":
             try:
