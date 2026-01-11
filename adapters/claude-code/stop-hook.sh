@@ -403,8 +403,8 @@ process_handoffs() {
 
     [[ -z "$pattern_lines" ]] && return 0
 
-    # Build JSON array of operations for batch processing
-    local operations="[]"
+    # Collect operations as newline-separated JSON objects (slurped into array at end)
+    local op_lines=""
 
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
@@ -532,20 +532,18 @@ process_handoffs() {
             op_json=$(jq -n --arg i "$handoff_id" '{op: "complete", id: $i}')
         fi
 
-        # Append to operations array
-        [[ -n "$op_json" ]] && operations=$(echo "$operations" | jq --argjson op "$op_json" '. += [$op]')
+        # Collect operation (will be slurped into array at end)
+        [[ -n "$op_json" ]] && op_lines+="$op_json"$'\n'
 
     done <<< "$pattern_lines"
 
     # Skip if no operations collected
-    local op_count
-    op_count=$(echo "$operations" | jq 'length')
-    [[ "$op_count" -eq 0 ]] && return 0
+    [[ -z "$op_lines" ]] && return 0
 
-    # Single Python call for all operations
+    # Single Python call for all operations (jq -s slurps newline-delimited JSON into array)
     if [[ -f "$PYTHON_MANAGER" ]]; then
         local result
-        result=$(echo "$operations" | PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
+        result=$(echo "$op_lines" | jq -s '.' | PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
             python3 "$PYTHON_MANAGER" handoff batch-process 2>&1 || true)
 
         # Count successful operations
