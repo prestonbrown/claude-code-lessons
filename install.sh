@@ -289,50 +289,125 @@ install_claude() {
     # Copy all commands from repo
     cp "$SCRIPT_DIR/adapters/claude-code/commands/"*.md "$commands_dir/"
 
-    # Update settings.json with hooks (including periodic reminder and PreCompact)
+    # Update settings.json with hooks using deep merge
     local settings_file="$claude_dir/settings.json"
-    local hooks_config='{
-  "claudeRecall": {
-    "enabled": true,
-    "remindEvery": 12,
-    "topLessonsToShow": 3,
-    "relevanceTopN": 5,
-    "promotionThreshold": 50,
-    "decayIntervalDays": 7,
-    "maxLessons": 30
-  },
-  "hooks": {
-    "SessionStart": [{"hooks": [
-      {"type": "command", "command": "bash '"$hooks_dir"'/inject-hook.sh", "timeout": 5000},
-      {"type": "command", "command": "rm -f ~/.config/claude-recall/.reminder-state", "timeout": 1000}
-    ]}],
-    "UserPromptSubmit": [{"hooks": [
-      {"type": "command", "command": "bash '"$hooks_dir"'/capture-hook.sh", "timeout": 5000},
-      {"type": "command", "command": "bash '"$hooks_dir"'/smart-inject-hook.sh", "timeout": 15000},
-      {"type": "command", "command": "~/.config/claude-recall/lesson-reminder-hook.sh", "timeout": 2000}
-    ]}],
-    "Stop": [{"hooks": [
-      {"type": "command", "command": "bash '"$hooks_dir"'/stop-hook.sh", "timeout": 5000},
-      {"type": "command", "command": "bash '"$hooks_dir"'/session-end-hook.sh", "timeout": 30000}
-    ]}],
-    "PreCompact": [{"hooks": [{"type": "command", "command": "bash '"$hooks_dir"'/precompact-hook.sh", "timeout": 45000}]}],
-    "PostToolUse": [
-      {"matcher": "ExitPlanMode", "hooks": [{"type": "command", "command": "bash '"$hooks_dir"'/post-exitplanmode-hook.sh", "timeout": 5000}]},
-      {"matcher": "TodoWrite", "hooks": [{"type": "command", "command": "bash '"$hooks_dir"'/post-todowrite-hook.sh", "timeout": 5000}]}
-    ]
-  }
-}'
-    
-    if [[ -f "$settings_file" ]]; then
-        local backup="${settings_file}.backup.$(date +%Y%m%d_%H%M%S)"
-        cp "$settings_file" "$backup"
-        log_info "Backed up settings to $backup"
-        jq -s '.[0] * .[1]' "$settings_file" <(echo "$hooks_config") > "${settings_file}.tmp"
-        mv "${settings_file}.tmp" "$settings_file"
-    else
-        echo "$hooks_config" | jq '.' > "$settings_file"
+    local hooks_config_file="$SCRIPT_DIR/adapters/claude-code/hooks-config.json"
+
+    # Create settings file if it doesn't exist
+    if [[ ! -f "$settings_file" ]]; then
+        echo '{}' > "$settings_file"
     fi
 
+    local backup="${settings_file}.backup.$(date +%Y%m%d_%H%M%S)"
+    cp "$settings_file" "$backup"
+    log_info "Backed up settings to $backup"
+
+    # Read hooks config and substitute {{HOOKS_DIR}} placeholder
+    local hooks_config
+    hooks_config=$(sed "s|{{HOOKS_DIR}}|$hooks_dir|g" "$hooks_config_file")
+
+    # Deep merge: preserve user hooks, update/add our hooks
+    # Hooks are identified by patterns in their command field
+    jq -s --argjson new_config "$hooks_config" '
+      .[0] as $existing |
+
+      # Helper: update or add a hook by command pattern
+      def upsert_hook(pattern; new_hook):
+        if any(.[]; .command | contains(pattern)) then
+          map(if .command | contains(pattern) then new_hook else . end)
+        else
+          . + [new_hook]
+        end;
+
+      # Helper: update or add a PostToolUse matcher entry
+      def upsert_matcher(matcher_name; new_entry):
+        if any(.[]; .matcher == matcher_name) then
+          map(if .matcher == matcher_name then new_entry else . end)
+        else
+          . + [new_entry]
+        end;
+
+      # Merge claudeRecall config (preserve user overrides)
+      ($existing.claudeRecall // {}) as $user_recall |
+      ($new_config.claudeRecall * $user_recall) as $merged_recall |
+
+      # Start with existing settings
+      $existing |
+
+      # Set merged claudeRecall
+      .claudeRecall = $merged_recall |
+
+      # Ensure hooks object exists
+      .hooks //= {} |
+
+      # SessionStart: merge hooks
+      .hooks.SessionStart //= [{"hooks": []}] |
+      .hooks.SessionStart[0].hooks = (
+        .hooks.SessionStart[0].hooks |
+        reduce ($new_config.hooks.SessionStart[0].hooks[] | . as $h |
+          ($h.command | split("/")[-1] | split(" ")[0]) as $pattern |
+          {pattern: $pattern, hook: $h}
+        ) as $item (.; upsert_hook($item.pattern; $item.hook))
+      ) |
+
+      # UserPromptSubmit: merge hooks
+      .hooks.UserPromptSubmit //= [{"hooks": []}] |
+      .hooks.UserPromptSubmit[0].hooks = (
+        .hooks.UserPromptSubmit[0].hooks |
+        reduce ($new_config.hooks.UserPromptSubmit[0].hooks[] | . as $h |
+          ($h.command | split("/")[-1] | split(" ")[0]) as $pattern |
+          {pattern: $pattern, hook: $h}
+        ) as $item (.; upsert_hook($item.pattern; $item.hook))
+      ) |
+
+      # Stop: merge hooks
+      .hooks.Stop //= [{"hooks": []}] |
+      .hooks.Stop[0].hooks = (
+        .hooks.Stop[0].hooks |
+        reduce ($new_config.hooks.Stop[0].hooks[] | . as $h |
+          ($h.command | split("/")[-1] | split(" ")[0]) as $pattern |
+          {pattern: $pattern, hook: $h}
+        ) as $item (.; upsert_hook($item.pattern; $item.hook))
+      ) |
+
+      # PreCompact: merge hooks
+      .hooks.PreCompact //= [{"hooks": []}] |
+      .hooks.PreCompact[0].hooks = (
+        .hooks.PreCompact[0].hooks |
+        reduce ($new_config.hooks.PreCompact[0].hooks[] | . as $h |
+          ($h.command | split("/")[-1] | split(" ")[0]) as $pattern |
+          {pattern: $pattern, hook: $h}
+        ) as $item (.; upsert_hook($item.pattern; $item.hook))
+      ) |
+
+      # PostToolUse: merge by matcher name
+      .hooks.PostToolUse //= [] |
+      .hooks.PostToolUse = (
+        .hooks.PostToolUse |
+        reduce ($new_config.hooks.PostToolUse[]) as $entry (.;
+          upsert_matcher($entry.matcher; $entry)
+        )
+      )
+    ' "$settings_file" > "${settings_file}.tmp"
+
+    # Post-process to match user's formatting style
+    if [[ -s "${settings_file}.tmp" ]]; then
+        python3 "$SCRIPT_DIR/adapters/claude-code/format-settings.py" "${settings_file}.tmp" > "${settings_file}.tmp2" 2>/dev/null
+        if [[ -s "${settings_file}.tmp2" ]]; then
+            mv "${settings_file}.tmp2" "${settings_file}.tmp"
+        fi
+        # Fallback: if Python formatting failed, keep jq output
+    fi
+
+    if [[ -s "${settings_file}.tmp" ]]; then
+        mv "${settings_file}.tmp" "$settings_file"
+        log_success "Deep merged hooks into settings.json"
+    else
+        rm -f "${settings_file}.tmp"
+        log_error "Failed to update settings.json - restoring backup"
+        cp "$backup" "$settings_file"
+        return 1
+    fi
 
     log_success "Installed Claude Code adapter"
 }
