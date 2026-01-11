@@ -381,7 +381,6 @@ process_handoffs() {
     local last_timestamp="$3"
     local session_id="$4"
     local processed_count=0
-    local last_handoff_id=""  # Track last created handoff for LAST reference
 
     # Detect session origin to prevent sub-agents from creating handoffs
     # Sub-agents (Explore, Plan, General, System) can only UPDATE existing handoffs
@@ -404,14 +403,17 @@ process_handoffs() {
 
     [[ -z "$pattern_lines" ]] && return 0
 
+    # Build JSON array of operations for batch processing
+    local operations="[]"
+
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
         # H2: Skip overly long lines to prevent ReDoS in regex matching
         [[ ${#line} -gt 1000 ]] && continue
-        local result=""
+
+        local op_json=""
 
         # Pattern 1: HANDOFF: <title> [- <description>] -> add new handoff
-        # Use -- to terminate options and prevent injection via crafted titles
         # NOTE: Sub-agents (Explore, Plan, General, System) are blocked from creating handoffs
         if [[ "$line" =~ ^HANDOFF:\ (.+)$ ]]; then
             # Block sub-agents from creating handoffs - they should only UPDATE
@@ -436,18 +438,10 @@ process_handoffs() {
             [[ -z "$title" ]] && continue
             desc=$(sanitize_input "$desc" 500)
 
-            if [[ -f "$PYTHON_MANAGER" ]]; then
-                if [[ -n "$desc" ]]; then
-                    result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                        python3 "$PYTHON_MANAGER" approach add --desc "$desc" -- "$title" 2>&1 || true)
-                else
-                    result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                        python3 "$PYTHON_MANAGER" approach add -- "$title" 2>&1 || true)
-                fi
-                # Extract created ID for LAST reference (e.g., "Added handoff hf-a1b2c3d: ..." or "Added handoff A001: ...")
-                if [[ "$result" =~ Added\ (approach|handoff)\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}) ]]; then
-                    last_handoff_id="${BASH_REMATCH[2]}"
-                fi
+            if [[ -n "$desc" ]]; then
+                op_json=$(jq -n --arg t "$title" --arg d "$desc" '{op: "add", title: $t, desc: $d}')
+            else
+                op_json=$(jq -n --arg t "$title" '{op: "add", title: $t}')
             fi
 
         # Pattern 1b: PLAN MODE: <title> -> add handoff with plan mode defaults
@@ -463,134 +457,100 @@ process_handoffs() {
             title=$(sanitize_input "$title" 200)
             [[ -z "$title" ]] && continue
 
-            if [[ -f "$PYTHON_MANAGER" ]]; then
-                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                    python3 "$PYTHON_MANAGER" approach add --phase research --agent plan -- "$title" 2>&1 || true)
-                # Extract created ID for LAST reference
-                if [[ "$result" =~ Added\ (approach|handoff)\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}) ]]; then
-                    last_handoff_id="${BASH_REMATCH[2]}"
-                fi
-            fi
+            op_json=$(jq -n --arg t "$title" '{op: "add", title: $t, phase: "research", agent: "plan"}')
 
         # Pattern 2: HANDOFF UPDATE <id>|LAST: status <status>
         elif [[ "$line" =~ ^HANDOFF\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ status\ (.+)$ ]]; then
             local handoff_id="${BASH_REMATCH[1]}"
-            [[ "$handoff_id" == "LAST" ]] && handoff_id="$last_handoff_id"
-            [[ -z "$handoff_id" ]] && continue
             local status="${BASH_REMATCH[2]}"
             status=$(sanitize_input "$status" 20)
 
-            if [[ -f "$PYTHON_MANAGER" ]]; then
-                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                    python3 "$PYTHON_MANAGER" approach update "$handoff_id" --status "$status" 2>&1 || true)
-            fi
+            op_json=$(jq -n --arg i "$handoff_id" --arg s "$status" '{op: "update", id: $i, status: $s}')
 
         # Pattern 2b: HANDOFF UPDATE <id>|LAST: phase <phase>
         elif [[ "$line" =~ ^HANDOFF\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ phase\ (.+)$ ]]; then
             local handoff_id="${BASH_REMATCH[1]}"
-            [[ "$handoff_id" == "LAST" ]] && handoff_id="$last_handoff_id"
-            [[ -z "$handoff_id" ]] && continue
             local phase="${BASH_REMATCH[2]}"
             phase=$(sanitize_input "$phase" 20)
 
-            if [[ -f "$PYTHON_MANAGER" ]]; then
-                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                    python3 "$PYTHON_MANAGER" approach update "$handoff_id" --phase "$phase" 2>&1 || true)
-            fi
+            op_json=$(jq -n --arg i "$handoff_id" --arg p "$phase" '{op: "update", id: $i, phase: $p}')
 
         # Pattern 2c: HANDOFF UPDATE <id>|LAST: agent <agent>
         elif [[ "$line" =~ ^HANDOFF\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ agent\ (.+)$ ]]; then
             local handoff_id="${BASH_REMATCH[1]}"
-            [[ "$handoff_id" == "LAST" ]] && handoff_id="$last_handoff_id"
-            [[ -z "$handoff_id" ]] && continue
             local agent="${BASH_REMATCH[2]}"
             agent=$(sanitize_input "$agent" 30)
 
-            if [[ -f "$PYTHON_MANAGER" ]]; then
-                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                    python3 "$PYTHON_MANAGER" approach update "$handoff_id" --agent "$agent" 2>&1 || true)
-            fi
+            op_json=$(jq -n --arg i "$handoff_id" --arg a "$agent" '{op: "update", id: $i, agent: $a}')
 
         # Pattern 2d: HANDOFF UPDATE <id>|LAST: desc <text>
         elif [[ "$line" =~ ^HANDOFF\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ desc\ (.+)$ ]]; then
             local handoff_id="${BASH_REMATCH[1]}"
-            [[ "$handoff_id" == "LAST" ]] && handoff_id="$last_handoff_id"
-            [[ -z "$handoff_id" ]] && continue
             local desc_text="${BASH_REMATCH[2]}"
             desc_text=$(sanitize_input "$desc_text" 500)
 
-            if [[ -f "$PYTHON_MANAGER" ]]; then
-                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                    python3 "$PYTHON_MANAGER" approach update "$handoff_id" --desc "$desc_text" 2>&1 || true)
-            fi
+            op_json=$(jq -n --arg i "$handoff_id" --arg d "$desc_text" '{op: "update", id: $i, desc: $d}')
 
         # Pattern 3: HANDOFF UPDATE <id>|LAST: tried <outcome> - <description>
         elif [[ "$line" =~ ^HANDOFF\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ tried\ ([a-z]+)\ -\ (.+)$ ]]; then
             local handoff_id="${BASH_REMATCH[1]}"
             local outcome="${BASH_REMATCH[2]}"
             local description="${BASH_REMATCH[3]}"
-            [[ "$handoff_id" == "LAST" ]] && handoff_id="$last_handoff_id"
-            [[ -z "$handoff_id" ]] && continue
             # Validate outcome is one of the expected values
             [[ "$outcome" =~ ^(success|fail|partial)$ ]] || continue
             description=$(sanitize_input "$description" 500)
 
-            if [[ -f "$PYTHON_MANAGER" ]]; then
-                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                    python3 "$PYTHON_MANAGER" approach update "$handoff_id" --tried "$outcome" "$description" 2>&1 || true)
-            fi
+            op_json=$(jq -n --arg i "$handoff_id" --arg o "$outcome" --arg d "$description" '{op: "update", id: $i, tried: [$o, $d]}')
 
         # Pattern 4: HANDOFF UPDATE <id>|LAST: next <text>
         elif [[ "$line" =~ ^HANDOFF\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ next\ (.+)$ ]]; then
             local handoff_id="${BASH_REMATCH[1]}"
-            [[ "$handoff_id" == "LAST" ]] && handoff_id="$last_handoff_id"
-            [[ -z "$handoff_id" ]] && continue
             local next_text="${BASH_REMATCH[2]}"
             next_text=$(sanitize_input "$next_text" 500)
 
-            if [[ -f "$PYTHON_MANAGER" ]]; then
-                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                    python3 "$PYTHON_MANAGER" approach update "$handoff_id" --next -- "$next_text" 2>&1 || true)
-
-                # Infer blocked_by from next_steps text patterns
-                local inferred_blockers
-                inferred_blockers=$(infer_blocked_by "$next_text")
-                if [[ -n "$inferred_blockers" ]]; then
-                    PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                        python3 "$PYTHON_MANAGER" approach update "$handoff_id" --blocked-by "$inferred_blockers" 2>&1 || true
-                fi
+            # Infer blocked_by from next_steps text patterns
+            local inferred_blockers
+            inferred_blockers=$(infer_blocked_by "$next_text")
+            if [[ -n "$inferred_blockers" ]]; then
+                op_json=$(jq -n --arg i "$handoff_id" --arg n "$next_text" --arg b "$inferred_blockers" '{op: "update", id: $i, next: $n, blocked_by: $b}')
+            else
+                op_json=$(jq -n --arg i "$handoff_id" --arg n "$next_text" '{op: "update", id: $i, next: $n}')
             fi
 
         # Pattern 4b: HANDOFF UPDATE <id>|LAST: blocked_by <id>,<id>,...
         elif [[ "$line" =~ ^HANDOFF\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ blocked_by\ (.+)$ ]]; then
             local handoff_id="${BASH_REMATCH[1]}"
-            [[ "$handoff_id" == "LAST" ]] && handoff_id="$last_handoff_id"
-            [[ -z "$handoff_id" ]] && continue
             local blocked_ids="${BASH_REMATCH[2]}"
             blocked_ids=$(sanitize_input "$blocked_ids" 200)
 
-            if [[ -f "$PYTHON_MANAGER" ]]; then
-                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                    python3 "$PYTHON_MANAGER" approach update "$handoff_id" --blocked-by "$blocked_ids" 2>&1 || true)
-            fi
+            op_json=$(jq -n --arg i "$handoff_id" --arg b "$blocked_ids" '{op: "update", id: $i, blocked_by: $b}')
 
         # Pattern 5: HANDOFF COMPLETE <id>|LAST
         elif [[ "$line" =~ ^HANDOFF\ COMPLETE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST)$ ]]; then
             local handoff_id="${BASH_REMATCH[1]}"
-            [[ "$handoff_id" == "LAST" ]] && handoff_id="$last_handoff_id"
-            [[ -z "$handoff_id" ]] && continue
 
-            if [[ -f "$PYTHON_MANAGER" ]]; then
-                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                    python3 "$PYTHON_MANAGER" approach complete "$handoff_id" 2>&1 || true)
-            fi
+            op_json=$(jq -n --arg i "$handoff_id" '{op: "complete", id: $i}')
         fi
 
-        # Count successful operations (non-empty result without Error:)
-        if [[ -n "$result" && "$result" != Error:* ]]; then
-            ((processed_count++)) || true
-        fi
+        # Append to operations array
+        [[ -n "$op_json" ]] && operations=$(echo "$operations" | jq --argjson op "$op_json" '. += [$op]')
+
     done <<< "$pattern_lines"
+
+    # Skip if no operations collected
+    local op_count
+    op_count=$(echo "$operations" | jq 'length')
+    [[ "$op_count" -eq 0 ]] && return 0
+
+    # Single Python call for all operations
+    if [[ -f "$PYTHON_MANAGER" ]]; then
+        local result
+        result=$(echo "$operations" | PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
+            python3 "$PYTHON_MANAGER" handoff batch-process 2>&1 || true)
+
+        # Count successful operations
+        processed_count=$(echo "$result" | jq '[.results[] | select(.ok == true)] | length' 2>/dev/null || echo 0)
+    fi
 
     (( processed_count > 0 )) && echo "[handoffs] $processed_count handoff command(s) processed" >&2
 }

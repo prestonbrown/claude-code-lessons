@@ -6310,5 +6310,260 @@ class TestExplicitHandoffIdInTodos:
         assert result == active_handoff
 
 
+# =============================================================================
+# Batch Handoff Processing
+# =============================================================================
+
+
+class TestHandoffBatchProcess:
+    """Tests for batch handoff processing.
+
+    The batch_process method allows multiple handoff operations in a single call,
+    reducing overhead when processing multiple commands from agent output.
+    """
+
+    def test_handoff_batch_process_add_single(self, manager: "LessonsManager"):
+        """Batch with one add operation should create the handoff."""
+        operations = [
+            {"op": "add", "title": "Batch test handoff", "desc": "Created via batch"}
+        ]
+
+        result = manager.handoff_batch_process(operations)
+
+        # Should return results for each operation
+        assert "results" in result
+        assert len(result["results"]) == 1
+        assert result["results"][0]["ok"] is True
+        assert result["results"][0]["id"].startswith("hf-")
+
+        # Handoff should exist
+        handoff = manager.handoff_get(result["results"][0]["id"])
+        assert handoff is not None
+        assert handoff.title == "Batch test handoff"
+        assert handoff.description == "Created via batch"
+
+    def test_handoff_batch_process_multiple_updates(
+        self, manager: "LessonsManager"
+    ):
+        """Batch with multiple updates to same handoff should apply all."""
+        # Create a handoff first
+        handoff_id = manager.handoff_add(title="Multi-update test")
+
+        operations = [
+            {"op": "update", "id": handoff_id, "status": "in_progress"},
+            {"op": "update", "id": handoff_id, "tried": ["success", "First step done"]},
+            {"op": "update", "id": handoff_id, "tried": ["partial", "Second step partial"]},
+            {"op": "update", "id": handoff_id, "next": "Continue with third step"},
+        ]
+
+        result = manager.handoff_batch_process(operations)
+
+        # All operations should succeed
+        assert len(result["results"]) == 4
+        assert all(r["ok"] for r in result["results"])
+
+        # Verify all updates applied
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "in_progress"
+        assert len(handoff.tried) == 2
+        assert handoff.tried[0].outcome == "success"
+        assert handoff.tried[0].description == "First step done"
+        assert handoff.tried[1].outcome == "partial"
+        assert handoff.tried[1].description == "Second step partial"
+        assert handoff.next_steps == "Continue with third step"
+
+    def test_handoff_batch_process_mixed_operations(
+        self, manager: "LessonsManager"
+    ):
+        """Batch with mixed add, update, and complete operations."""
+        operations = [
+            {"op": "add", "title": "Mixed ops handoff", "desc": "Will be completed"},
+            # Note: we'll use LAST to reference the just-created handoff
+        ]
+
+        # First batch: create handoff
+        result1 = manager.handoff_batch_process(operations)
+        handoff_id = result1["results"][0]["id"]
+
+        # Second batch: update and complete
+        operations2 = [
+            {"op": "update", "id": handoff_id, "status": "in_progress"},
+            {"op": "update", "id": handoff_id, "tried": ["success", "All work done"]},
+            {"op": "complete", "id": handoff_id},
+        ]
+
+        result2 = manager.handoff_batch_process(operations2)
+
+        # All operations should succeed
+        assert len(result2["results"]) == 3
+        assert all(r["ok"] for r in result2["results"])
+
+        # Verify final state
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "completed"
+        assert len(handoff.tried) == 1
+
+    def test_handoff_batch_process_last_reference(
+        self, manager: "LessonsManager"
+    ):
+        """Batch using 'LAST' to reference most recently created handoff."""
+        operations = [
+            {"op": "add", "title": "First handoff"},
+            {"op": "update", "id": "LAST", "status": "in_progress"},
+            {"op": "update", "id": "LAST", "tried": ["success", "Work on first"]},
+            {"op": "add", "title": "Second handoff"},
+            {"op": "update", "id": "LAST", "next": "Next step for second"},
+        ]
+
+        result = manager.handoff_batch_process(operations)
+
+        # All operations should succeed
+        assert len(result["results"]) == 5
+        assert all(r["ok"] for r in result["results"])
+
+        # last_id should be the second handoff created
+        assert "last_id" in result
+        second_id = result["results"][3]["id"]  # Fourth op is second add
+        assert result["last_id"] == second_id
+
+        # Verify first handoff got its updates
+        first_id = result["results"][0]["id"]
+        first_handoff = manager.handoff_get(first_id)
+        assert first_handoff.status == "in_progress"
+        assert len(first_handoff.tried) == 1
+        assert first_handoff.tried[0].description == "Work on first"
+
+        # Verify second handoff got its update
+        second_handoff = manager.handoff_get(second_id)
+        assert second_handoff.next_steps == "Next step for second"
+
+    def test_handoff_batch_process_invalid_op_continues(
+        self, manager: "LessonsManager"
+    ):
+        """One bad operation should not stop processing of others."""
+        # Create a valid handoff
+        valid_id = manager.handoff_add(title="Valid handoff")
+
+        operations = [
+            {"op": "update", "id": valid_id, "status": "in_progress"},
+            {"op": "update", "id": "hf-invalid", "status": "blocked"},  # Invalid ID
+            {"op": "update", "id": valid_id, "tried": ["success", "This should work"]},
+            {"op": "complete", "id": "hf-missing"},  # Another invalid ID
+            {"op": "update", "id": valid_id, "next": "Final next step"},
+        ]
+
+        result = manager.handoff_batch_process(operations)
+
+        # Should have results for all operations
+        assert len(result["results"]) == 5
+
+        # Valid operations should succeed
+        assert result["results"][0]["ok"] is True  # First update
+        assert result["results"][2]["ok"] is True  # Third update (tried)
+        assert result["results"][4]["ok"] is True  # Fifth update (next)
+
+        # Invalid operations should fail gracefully
+        assert result["results"][1]["ok"] is False
+        assert "error" in result["results"][1]
+        assert result["results"][3]["ok"] is False
+        assert "error" in result["results"][3]
+
+        # Verify valid handoff was fully updated
+        handoff = manager.handoff_get(valid_id)
+        assert handoff.status == "in_progress"
+        assert len(handoff.tried) == 1
+        assert handoff.next_steps == "Final next step"
+
+    def test_handoff_batch_process_empty_list(self, manager: "LessonsManager"):
+        """Empty operations list should return empty results."""
+        result = manager.handoff_batch_process([])
+
+        assert "results" in result
+        assert len(result["results"]) == 0
+        # last_id should be None or not present for empty batch
+        assert result.get("last_id") is None
+
+    def test_handoff_batch_process_invalid_status(self, manager: "LessonsManager"):
+        """Invalid status should return error."""
+        # First add a handoff
+        result = manager.handoff_batch_process([{"op": "add", "title": "Test"}])
+        handoff_id = result["results"][0]["id"]
+
+        # Try to update with invalid status
+        result = manager.handoff_batch_process([
+            {"op": "update", "id": handoff_id, "status": "bogus_status"}
+        ])
+
+        assert result["results"][0]["ok"] is False
+        assert "Invalid status" in result["results"][0]["error"]
+
+    def test_handoff_batch_process_invalid_phase(self, manager: "LessonsManager"):
+        """Invalid phase should return error."""
+        # First add a handoff
+        result = manager.handoff_batch_process([{"op": "add", "title": "Test"}])
+        handoff_id = result["results"][0]["id"]
+
+        # Try to update with invalid phase
+        result = manager.handoff_batch_process([
+            {"op": "update", "id": handoff_id, "phase": "bogus_phase"}
+        ])
+
+        assert result["results"][0]["ok"] is False
+        assert "Invalid phase" in result["results"][0]["error"]
+
+    def test_handoff_batch_process_invalid_agent(self, manager: "LessonsManager"):
+        """Invalid agent should return error."""
+        # First add a handoff
+        result = manager.handoff_batch_process([{"op": "add", "title": "Test"}])
+        handoff_id = result["results"][0]["id"]
+
+        # Try to update with invalid agent
+        result = manager.handoff_batch_process([
+            {"op": "update", "id": handoff_id, "agent": "bogus_agent"}
+        ])
+
+        assert result["results"][0]["ok"] is False
+        assert "Invalid agent" in result["results"][0]["error"]
+
+    def test_handoff_batch_process_invalid_tried_outcome(self, manager: "LessonsManager"):
+        """Invalid tried outcome should return error."""
+        # First add a handoff
+        result = manager.handoff_batch_process([{"op": "add", "title": "Test"}])
+        handoff_id = result["results"][0]["id"]
+
+        # Try to update with invalid tried outcome
+        result = manager.handoff_batch_process([
+            {"op": "update", "id": handoff_id, "tried": ["bogus_outcome", "description"]}
+        ])
+
+        assert result["results"][0]["ok"] is False
+        assert "Invalid tried outcome" in result["results"][0]["error"]
+
+    def test_handoff_batch_process_no_valid_fields(self, manager: "LessonsManager"):
+        """Update with no valid fields should return warning."""
+        # First add a handoff
+        result = manager.handoff_batch_process([{"op": "add", "title": "Test"}])
+        handoff_id = result["results"][0]["id"]
+
+        # Try to update with only invalid fields (empty update)
+        result = manager.handoff_batch_process([
+            {"op": "update", "id": handoff_id}
+        ])
+
+        assert result["results"][0]["ok"] is True
+        assert result["results"][0]["id"] == handoff_id
+        assert "warning" in result["results"][0]
+        assert "No valid fields" in result["results"][0]["warning"]
+
+    def test_handoff_batch_process_last_without_add(self, manager: "LessonsManager"):
+        """LAST reference without prior add should fail."""
+        result = manager.handoff_batch_process([
+            {"op": "update", "id": "LAST", "status": "in_progress"}
+        ])
+
+        assert result["results"][0]["ok"] is False
+        assert "LAST" in result["results"][0]["error"] or "No handoff" in result["results"][0]["error"]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

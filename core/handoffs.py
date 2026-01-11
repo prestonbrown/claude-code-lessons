@@ -2341,3 +2341,252 @@ Consider extracting lessons about:
         })
 
         return handoff_id
+
+    # -------------------------------------------------------------------------
+    # Batch Processing
+    # -------------------------------------------------------------------------
+
+    def handoff_batch_process(self, operations: List[dict]) -> dict:
+        """
+        Process multiple handoff operations in a single batch.
+
+        This method is optimized to parse the file ONCE, apply ALL operations
+        in memory, and write the file ONCE at the end. This reduces I/O overhead
+        when processing multiple commands from agent output.
+
+        Args:
+            operations: List of operation dicts. Supported operations:
+                {"op": "add", "title": "...", "desc": "...", "phase": "...", "agent": "..."}
+                {"op": "update", "id": "hf-xxx", "status": "in_progress"}
+                {"op": "update", "id": "hf-xxx", "tried": ["success", "description"]}
+                {"op": "update", "id": "hf-xxx", "next": "..."}
+                {"op": "update", "id": "hf-xxx", "checkpoint": "..."}
+                {"op": "update", "id": "hf-xxx", "phase": "..."}
+                {"op": "update", "id": "hf-xxx", "agent": "..."}
+                {"op": "update", "id": "hf-xxx", "desc": "..."}
+                {"op": "update", "id": "hf-xxx", "blocked_by": "id1,id2"}
+                {"op": "complete", "id": "hf-xxx"}
+
+                When "id" is "LAST", resolves to the most recently created handoff ID.
+
+        Returns:
+            {
+                "results": [
+                    {"ok": True, "id": "hf-abc123"},
+                    {"ok": False, "error": "Handoff not found"},
+                    ...
+                ],
+                "last_id": "hf-abc123"  # Last created/used handoff ID, or None
+            }
+        """
+        if not operations:
+            return {"results": [], "last_id": None}
+
+        results = []
+        last_created_id = None
+        today = date.today()
+
+        # Initialize files if they don't exist
+        self._init_handoffs_file()
+
+        # Acquire lock once and parse file once
+        with FileLock(self.project_handoffs_file):
+            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+            handoffs_by_id = {h.id: h for h in handoffs}
+            modified = False
+
+            for op in operations:
+                op_type = op.get("op")
+                op_result = {"ok": False, "error": "Unknown operation"}
+
+                try:
+                    if op_type == "add":
+                        # Add a new handoff
+                        title = op.get("title", "")
+                        if not title:
+                            op_result = {"ok": False, "error": "Title required for add"}
+                        else:
+                            # Check for duplicate
+                            title_lower = title.lower().strip()
+                            existing = None
+                            for h in handoffs:
+                                if h.status != "completed" and h.title.lower().strip() == title_lower:
+                                    existing = h
+                                    break
+
+                            if existing:
+                                # Return existing ID (duplicate detection)
+                                op_result = {"ok": True, "id": existing.id}
+                                last_created_id = existing.id
+                            else:
+                                # Create new handoff
+                                new_id = self._generate_handoff_id(title)
+                                phase = op.get("phase", "research")
+                                agent = op.get("agent", "user")
+
+                                # Validate phase and agent
+                                if phase not in self.VALID_PHASES:
+                                    phase = "research"
+                                if agent not in self.VALID_AGENTS:
+                                    agent = "user"
+
+                                new_handoff = Handoff(
+                                    id=new_id,
+                                    title=title,
+                                    status="not_started",
+                                    created=today,
+                                    updated=today,
+                                    refs=[],
+                                    description=op.get("desc", ""),
+                                    tried=[],
+                                    next_steps="",
+                                    phase=phase,
+                                    agent=agent,
+                                    stealth=False,
+                                )
+                                handoffs.append(new_handoff)
+                                handoffs_by_id[new_id] = new_handoff
+                                last_created_id = new_id
+                                modified = True
+                                op_result = {"ok": True, "id": new_id}
+
+                    elif op_type == "update":
+                        # Update an existing handoff
+                        handoff_id = op.get("id", "")
+
+                        # Resolve LAST reference
+                        if handoff_id == "LAST":
+                            if last_created_id:
+                                handoff_id = last_created_id
+                            else:
+                                op_result = {"ok": False, "error": "No handoff created yet for LAST reference"}
+                                results.append(op_result)
+                                continue
+
+                        handoff = handoffs_by_id.get(handoff_id)
+                        if not handoff:
+                            op_result = {"ok": False, "error": f"Handoff {handoff_id} not found"}
+                        else:
+                            # Apply updates, tracking if anything changed
+                            fields_updated = 0
+                            validation_error = None
+
+                            if "status" in op:
+                                status = op["status"]
+                                if status in self.VALID_STATUSES:
+                                    handoff.status = status
+                                    handoff.updated = today
+                                    modified = True
+                                    fields_updated += 1
+                                else:
+                                    validation_error = f"Invalid status: {status}"
+
+                            if "tried" in op and validation_error is None:
+                                tried_data = op["tried"]
+                                if isinstance(tried_data, list) and len(tried_data) >= 2:
+                                    outcome, description = tried_data[0], tried_data[1]
+                                    if outcome in self.VALID_OUTCOMES:
+                                        handoff.tried.append(TriedStep(
+                                            outcome=outcome,
+                                            description=description,
+                                        ))
+                                        handoff.updated = today
+                                        modified = True
+                                        fields_updated += 1
+                                    else:
+                                        validation_error = f"Invalid tried outcome: {outcome}"
+
+                            if "next" in op and validation_error is None:
+                                handoff.next_steps = op["next"]
+                                handoff.updated = today
+                                modified = True
+                                fields_updated += 1
+
+                            if "checkpoint" in op and validation_error is None:
+                                handoff.checkpoint = op["checkpoint"]
+                                handoff.last_session = today
+                                handoff.updated = today
+                                modified = True
+                                fields_updated += 1
+
+                            if "phase" in op and validation_error is None:
+                                phase = op["phase"]
+                                if phase in self.VALID_PHASES:
+                                    handoff.phase = phase
+                                    handoff.updated = today
+                                    modified = True
+                                    fields_updated += 1
+                                else:
+                                    validation_error = f"Invalid phase: {phase}"
+
+                            if "agent" in op and validation_error is None:
+                                agent = op["agent"]
+                                if agent in self.VALID_AGENTS:
+                                    handoff.agent = agent
+                                    handoff.updated = today
+                                    modified = True
+                                    fields_updated += 1
+                                else:
+                                    validation_error = f"Invalid agent: {agent}"
+
+                            if "desc" in op and validation_error is None:
+                                handoff.description = op["desc"]
+                                handoff.updated = today
+                                modified = True
+                                fields_updated += 1
+
+                            if "blocked_by" in op and validation_error is None:
+                                blocked_str = op["blocked_by"]
+                                if isinstance(blocked_str, str):
+                                    blocked_by = [b.strip() for b in blocked_str.split(",") if b.strip()]
+                                elif isinstance(blocked_str, list):
+                                    blocked_by = blocked_str
+                                else:
+                                    blocked_by = []
+                                handoff.blocked_by = blocked_by
+                                handoff.updated = today
+                                modified = True
+                                fields_updated += 1
+
+                            if validation_error:
+                                op_result = {"ok": False, "error": validation_error}
+                            elif fields_updated == 0:
+                                op_result = {"ok": True, "id": handoff_id, "warning": "No valid fields to update"}
+                            else:
+                                op_result = {"ok": True, "id": handoff_id}
+
+                    elif op_type == "complete":
+                        # Complete a handoff
+                        handoff_id = op.get("id", "")
+
+                        # Resolve LAST reference
+                        if handoff_id == "LAST":
+                            if last_created_id:
+                                handoff_id = last_created_id
+                            else:
+                                op_result = {"ok": False, "error": "No handoff created yet for LAST reference"}
+                                results.append(op_result)
+                                continue
+
+                        handoff = handoffs_by_id.get(handoff_id)
+                        if not handoff:
+                            op_result = {"ok": False, "error": f"Handoff {handoff_id} not found"}
+                        else:
+                            handoff.status = "completed"
+                            handoff.updated = today
+                            modified = True
+                            op_result = {"ok": True, "id": handoff_id}
+
+                    else:
+                        op_result = {"ok": False, "error": f"Unknown operation: {op_type}"}
+
+                except Exception as e:
+                    op_result = {"ok": False, "error": str(e)}
+
+                results.append(op_result)
+
+            # Write file once at the end if modified
+            if modified:
+                self._write_handoffs_file(handoffs)
+
+        return {"results": results, "last_id": last_created_id}

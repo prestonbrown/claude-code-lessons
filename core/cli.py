@@ -261,6 +261,12 @@ def main():
     add_transcript_parser.add_argument("transcript_path", help="Path to transcript file")
     add_transcript_parser.add_argument("--agent-type", help="Agent type (e.g., 'Explore')")
 
+    # handoff batch-process (process multiple operations in one call)
+    handoff_subparsers.add_parser(
+        "batch-process",
+        help="Process multiple handoff operations in one call (reads JSON from stdin)"
+    )
+
     # watch command - TUI debug viewer
     watch_parser = subparsers.add_parser("watch", help="Launch debug TUI viewer")
     watch_parser.add_argument("--project", "-p", help="Filter to specific project")
@@ -655,6 +661,15 @@ def main():
                 else:
                     print("No linked handoff found for session", file=sys.stderr)
                     sys.exit(1)
+
+            elif args.handoff_command == "batch-process":
+                # Read JSON from stdin (sys already imported at module level)
+                operations = json_module.loads(sys.stdin.read())
+                if not isinstance(operations, list):
+                    print("Error: Expected JSON array of operations", file=sys.stderr)
+                    sys.exit(1)
+                result = manager.handoff_batch_process(operations)
+                print(json_module.dumps(result))
 
         elif args.command == "watch":
             try:
